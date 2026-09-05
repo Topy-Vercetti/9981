@@ -24,6 +24,7 @@ function serializeLayer(layer: MapLayer): Record<string, unknown> {
   if (layer.backdrop !== undefined) {
     record['backdrop'] = {
       image: layer.backdrop.image,
+      mediaType: layer.backdrop.mediaType,
       pixelWidth: layer.backdrop.pixelWidth,
       pixelHeight: layer.backdrop.pixelHeight,
     };
@@ -102,11 +103,13 @@ export function serializeMapData(map: CanonicalMapData): string {
     name: map.name,
     backdrop: {
       image: map.backdrop.image,
+      mediaType: map.backdrop.mediaType,
       pixelWidth: map.backdrop.pixelWidth,
       pixelHeight: map.backdrop.pixelHeight,
       tileRows: map.backdrop.tileRows,
       tileCols: map.backdrop.tileCols,
     },
+    mapScale: map.mapScale,
     layers: map.layers.map(serializeLayer),
     nodes: map.nodes.map(serializeNode),
     edges: map.edges.map(serializeEdge),

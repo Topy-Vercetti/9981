@@ -13,6 +13,8 @@ export type {
   MapEdge,
   MapPlacement,
   MapBackdrop,
+  MapImageMediaType,
+  MapScale,
   Vec2,
   ObstructionSpec,
   TransitionWindowPoints,
@@ -37,6 +39,8 @@ export {
   CONNECTION_LIMIT,
   ADMITTED_CHILD_SCALES,
   EXPR_DISCRIMINANT_KEYS,
+  DEFAULT_MAP_SCALE,
+  inferMapImageMediaType,
   deriveLayerId,
   normalizeMapDocument,
 } from '../../play/map/types';

@@ -140,6 +140,8 @@ describe('spatial-view', () => {
       const result = createSpatialProjection(sampleMapData, sampleProjection);
 
       expect(result.layers).toHaveLength(3);
+      expect(result.layers.map((layer) => layer.id)).toEqual(['layer:floor:0', 'layer:floor:1', 'layer:floor:2']);
+      expect(result.nodes[0]?.layerId).toBe('layer:floor:2');
       expect(result.nodes).toHaveLength(1);
       expect(result.edges).toHaveLength(1);
       expect(result.entities).toHaveLength(0);

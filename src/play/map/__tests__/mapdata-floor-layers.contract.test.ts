@@ -215,6 +215,36 @@ describe('canonical 图层契约校验', () => {
   it('纯 legacy 地图 zero layer 诊断（legacy 由导入边界规范化，不判 mixed）', () => {
     expect(validateMapStructure(legacyMap())).toEqual([]);
   });
+
+  it('旧资源会推断位图媒介并补上标准角色比例尺', () => {
+    const normalized = normalizeMapDocument(canonicalMap());
+    expect(normalized.backdrop.mediaType).toBe('bitmap');
+    expect(normalized.mapScale?.standardCharacterWidth).toBe(0.05);
+  });
+
+  it('SVG 图层与位图使用同一图层资源契约', () => {
+    const map = canonicalMap({
+      mapScale: { standardCharacterWidth: 0.04 },
+      layers: [{
+        id: 'svg-layer',
+        backdrop: { image: 'map.svg', mediaType: 'svg', pixelWidth: 1200, pixelHeight: 800 },
+      }],
+      nodes: [canonicalNode('n', 'svg-layer')],
+    });
+    expect(validateMapStructure(map)).toEqual([]);
+    expect(normalizeMapDocument(map).layers[0]?.backdrop?.mediaType).toBe('svg');
+  });
+
+  it('拒绝非正比例尺与无效资源尺寸', () => {
+    const map = canonicalMap({
+      mapScale: { standardCharacterWidth: 0 },
+      layers: [{ id: 'bad', backdrop: { image: 'bad.svg', mediaType: 'svg', pixelWidth: 0, pixelHeight: 10 } }],
+      nodes: [canonicalNode('n', 'bad')],
+    });
+    const codes = codesOf(validateMapStructure(map));
+    expect(codes).toContain('MAP_INVALID_STANDARD_CHARACTER_WIDTH');
+    expect(codes).toContain('MAP_INVALID_IMAGE_RESOURCE');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -243,7 +273,7 @@ describe('canonical 序列化 / 解析 roundtrip', () => {
   it('canonical 序列化后 parse 读回等价结构（roundtrip 稳定）', () => {
     const canonical = canonicalMap();
     const fromJson = parseMapData(serializeMapData(canonical));
-    expect(fromJson).toEqual(canonical);
+    expect(fromJson).toEqual(normalizeMapDocument(canonical));
   });
 
   it('建筑组分支跨 serialize/parse 保持，且相同局部 height 不合并', () => {

@@ -14,7 +14,7 @@
    已验证的地图能进编辑器继续编辑。
    ========================================================================= */
 
-import { WORLD, type MapDoc, type Layer, type SceneNode, type Edge, type BuildingGroup, type BuildingFloor } from './map-types'
+import { STANDARD_CHARACTER_WIDTH, WORLD, type MapDoc, type Layer, type SceneNode, type Edge, type BuildingGroup, type BuildingFloor } from './map-types'
 import { uid } from './editor-store'
 import type {
   CanonicalMapData,
@@ -67,6 +67,7 @@ function layerToCanonical(layer: Layer): MapLayer {
       ? {
           backdrop: {
             image: layer.backdrop.image,
+            mediaType: layer.backdrop.mediaType,
             pixelWidth: layer.backdrop.pixelWidth,
             pixelHeight: layer.backdrop.pixelHeight,
           },
@@ -77,8 +78,8 @@ function layerToCanonical(layer: Layer): MapLayer {
           transform: {
             scaleX: layer.transform.scaleX,
             scaleY: layer.transform.scaleY,
-            tx: layer.transform.tx,
-            ty: layer.transform.ty,
+            tx: nx(layer.transform.tx),
+            ty: ny(layer.transform.ty),
           },
         }
       : {}),
@@ -154,6 +155,7 @@ export function editorDocToCanonical(doc: MapDoc): CanonicalMapData {
     id: doc.id,
     name: doc.name,
     backdrop: backdropOf(doc),
+    mapScale: { standardCharacterWidth: nx(doc.mapScale?.standardCharacterWidth ?? STANDARD_CHARACTER_WIDTH) },
     layers: doc.layers.map(layerToCanonical),
     nodes,
     edges,
@@ -181,8 +183,10 @@ function canonicalLayerToEditor(layer: MapLayer, fallbackHeight?: number): Layer
       : fallbackHeight !== undefined
         ? { height: fallbackHeight }
         : {}),
-    ...(layer.backdrop !== undefined ? { backdrop: layer.backdrop } : {}),
-    ...(layer.transform !== undefined ? { transform: layer.transform } : {}),
+    ...(layer.backdrop !== undefined ? { backdrop: { ...layer.backdrop } } : {}),
+    ...(layer.transform !== undefined
+      ? { transform: { ...layer.transform, tx: wx(layer.transform.tx), ty: wy(layer.transform.ty) } }
+      : {}),
   }
   return out
 }
@@ -268,6 +272,7 @@ export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
   return {
     id: canonical.id,
     name: canonical.name,
+    mapScale: { standardCharacterWidth: wx(canonical.mapScale?.standardCharacterWidth ?? 0.05) },
     layers,
     sceneNodes,
     sceneBoxes,

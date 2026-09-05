@@ -6,6 +6,7 @@ import { DustField } from './fx'
 import { playSfx } from '@editor/lib/sound'
 import {
   WORLD,
+  STANDARD_CHARACTER_WIDTH,
   SCALE_LABEL,
   DIRECTIONALITY_LABEL,
   nodeAnchor,
@@ -66,6 +67,8 @@ import {
   toast,
   flyTo,
   layerOpacity,
+  scalePendingLayer,
+  confirmPendingLayer,
   type Camera,
 } from '@editor/lib/editor-store'
 import {
@@ -590,6 +593,7 @@ export function Canvas() {
   const pulse = useEditor((s) => s.pulse)
   const dragMaterial = useEditor((s) => s.dragMaterial)
   const currentLayerId = useEditor((s) => s.currentLayerId)
+  const pendingLayerId = useEditor((s) => s.pendingLayerId)
 
   const selIds = new Set(selection.map((s) => s.id))
   const firstSelection = selection[0]
@@ -733,6 +737,11 @@ export function Canvas() {
       if (ev.button === 2) return // right-click handled by context menu
       const w = toW(ev)
       svgRef.current?.setPointerCapture(ev.pointerId)
+      const target = ev.target as Element
+      if (target.closest('[data-backdrop-layer]')) return
+      if (getState().pendingLayerId && target.closest('[data-canvas-background]')) {
+        confirmPendingLayer()
+      }
 
       // pan: space or middle button
       if (spaceRef.current || ev.button === 1) {
@@ -1083,7 +1092,13 @@ export function Canvas() {
   /* ---------- wheel: zoom, or rotate selected box ---------- */
   const onWheel = useCallback(
     (ev: React.WheelEvent) => {
-      const sel = getState().selection
+      const current = getState()
+      if (current.pendingLayerId) {
+        ev.preventDefault()
+        scalePendingLayer(ev.deltaY > 0 ? 0.92 : 1 / 0.92)
+        return
+      }
+      const sel = current.selection
       // rotate obstruction/terrain if single selected
       const selected = sel[0]
       if (
@@ -1195,6 +1210,7 @@ export function Canvas() {
   const nodeById = new Map(doc.sceneNodes.map((n) => [n.id, n]))
   const opacityForLayer = (layerId: string) =>
     layerId === currentLayerId ? 1 : layerOpacity(layerId)
+  const gridSize = doc.mapScale?.standardCharacterWidth ?? STANDARD_CHARACTER_WIDTH
 
   // B3：空洞全填——按 sceneId 分组的洞格子，仅在成员框集合变化时重算
   const holeCells = useMemo(() => computeHoleCells(doc), [doc.sceneBoxes])
@@ -1239,12 +1255,12 @@ export function Canvas() {
         <defs>
           <pattern
             id="grid"
-            width={80}
-            height={80}
+            width={gridSize}
+            height={gridSize}
             patternUnits="userSpaceOnUse"
           >
             <path
-              d="M80 0 H0 V80"
+              d={`M${gridSize} 0 H0 V${gridSize}`}
               fill="none"
               stroke="var(--border-strong)"
               strokeWidth={1}
@@ -1254,12 +1270,13 @@ export function Canvas() {
           </pattern>
         </defs>
 
-        {/* grid across a generous world region */}
+        {/* 网格跟随相机扩展；一格严格等于一个标准角色宽度。 */}
         <rect
-          x={-WORLD.w}
-          y={-WORLD.h}
-          width={WORLD.w * 3}
-          height={WORLD.h * 3}
+          data-canvas-background="true"
+          x={camera.x - camera.w}
+          y={camera.y - camera.h}
+          width={camera.w * 3}
+          height={camera.h * 3}
           fill="url(#grid)"
         />
         {/* world bounds */}
@@ -1274,7 +1291,44 @@ export function Canvas() {
           strokeDasharray="4 6"
           vectorEffect="non-scaling-stroke"
           opacity={0.4}
+          pointerEvents="none"
         />
+
+        {/* SVG 与位图共用同一图层渲染和等比变换。已确认图层不再参与命中。 */}
+        {doc.layers.map((layer) => {
+          if (!layer.backdrop) return null
+          const transform = layer.transform ?? { scaleX: 1, scaleY: 1, tx: 0, ty: 0 }
+          const pending = layer.id === pendingLayerId
+          return (
+            <g
+              key={`backdrop-${layer.id}`}
+              data-backdrop-layer={layer.id}
+              transform={`translate(${transform.tx} ${transform.ty}) scale(${transform.scaleX} ${transform.scaleY})`}
+              opacity={opacityForLayer(layer.id)}
+              pointerEvents={pending ? 'visiblePainted' : 'none'}
+            >
+              <image
+                href={layer.backdrop.image}
+                width={layer.backdrop.pixelWidth}
+                height={layer.backdrop.pixelHeight}
+                preserveAspectRatio="xMidYMid meet"
+              />
+              {pending && (
+                <rect
+                  x={0}
+                  y={0}
+                  width={layer.backdrop.pixelWidth}
+                  height={layer.backdrop.pixelHeight}
+                  fill="none"
+                  stroke="var(--primary)"
+                  strokeWidth={2 / Math.max(transform.scaleX, 0.001)}
+                  strokeDasharray={`${8 / Math.max(transform.scaleX, 0.001)} ${5 / Math.max(transform.scaleX, 0.001)}`}
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+            </g>
+          )
+        })}
 
         {/* terrains (bottom) */}
         {doc.terrains.map((t) => (

@@ -3,7 +3,7 @@ import { ProjectionBuilder } from '../stores/projection-builder'
 import { SpatialEntityStore } from '../stores/spatial-entity-store'
 import { ClusterStore } from '../stores/cluster-store'
 import { BuildingScopeStore } from '../building-scope-store'
-import type { MapData } from '../../../../play/map/types'
+import type { CanonicalMapData, MapData } from '../../../../play/map/types'
 
 const fixtureMap = (): MapData => ({
   schemaVersion: '1.0',
@@ -40,6 +40,29 @@ describe('ProjectionBuilder (P3)', () => {
     expect(proj.edges).toHaveLength(1)
     expect(proj.entities).toHaveLength(1)
     expect(Object.isFrozen(proj)).toBe(true)
+  })
+
+  it('projects canonical layers, media, transforms, scale, and node.layerId without using parent', () => {
+    const map: CanonicalMapData = {
+      schemaVersion: '2.0',
+      id: 'canonical',
+      name: 'Canonical',
+      backdrop: { image: 'fallback.png', pixelWidth: 1, pixelHeight: 1, tileRows: 1, tileCols: 1 },
+      mapScale: { standardCharacterWidth: 0.04 },
+      layers: [
+        { id: 'bitmap', backdrop: { image: 'map.png', mediaType: 'bitmap', pixelWidth: 100, pixelHeight: 80 } },
+        { id: 'vector', backdrop: { image: 'map.svg', mediaType: 'svg', pixelWidth: 100, pixelHeight: 80 }, transform: { scaleX: 2, scaleY: 2, tx: 0.1, ty: 0.2 } },
+      ],
+      nodes: [{ id: 'n1', def: 'd:scene/large', scale: 'large', at: { x: 0.5, y: 0.5 }, layerId: 'vector', parent: 'parent-scene' }],
+      edges: [],
+      placements: [],
+    }
+    const projection = new ProjectionBuilder({ mapData: map, entities: new SpatialEntityStore(), clusters: new ClusterStore(), buildingScope: new BuildingScopeStore(), revision: 1 }).build()
+    expect(projection.layers.map((layer) => layer.backdrop?.mediaType)).toEqual(['bitmap', 'svg'])
+    expect(projection.layers[1]?.transform).toEqual({ scaleX: 2, scaleY: 2, tx: 0.1, ty: 0.2 })
+    expect(projection.layers[1]?.standardCharacterWidth).toBe(0.04)
+    expect(projection.nodes[0]?.layerId).toBe('vector')
+    expect(Object.isFrozen(projection.layers[1]?.backdrop)).toBe(true)
   })
 
   it('EntityView.locationNodeId is the latest entity → nodeId', () => {

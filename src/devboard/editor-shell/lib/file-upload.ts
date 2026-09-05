@@ -1,12 +1,14 @@
 'use client'
-/* =========================================================================
-   PNG 文件上传工具 — 把浏览器文件读成本地 dataURL，供全屏/局部图层使用。
-   无后端：图片只在浏览器内存中，随地图 JSON 一起导出。
-   ========================================================================= */
 
-export type UploadCategory = '全屏' | '局部'
+export type MapImageMediaType = 'bitmap' | 'svg'
 
-/** 读取一个 PNG 文件 → dataURL（`data:image/png;base64,...`）。 */
+export interface UploadedMapImage {
+  dataUrl: string
+  width: number
+  height: number
+  mediaType: MapImageMediaType
+}
+
 export function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -19,39 +21,83 @@ export function fileToDataURL(file: File): Promise<string> {
   })
 }
 
-/** 校验文件确实是 PNG。MIME 或魔数都能接受。 */
 export function isPng(file: File): boolean {
-  if (file.size < 8) return false
-  if (file.type === 'image/png') return true
-  return isPngBuffer(file)
+  return file.size >= 8 && (file.type === 'image/png' || file.name.toLowerCase().endsWith('.png'))
 }
 
-/** 读前 8 字节魔数判断 PNG。IE/迟到浏览器不填 type 时的兜底。 */
-export function isPngBuffer(file: File): boolean {
-  return file.size >= 8 && file.name.toLowerCase().endsWith('.png')
+export function isSvg(file: File): boolean {
+  return file.size > 0 && (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg'))
 }
 
-/** 从 dataURL 读图像的像素尺寸。 */
 export function readImageSize(dataUrl: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
+    img.crossOrigin = 'anonymous'
     img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
     img.onerror = () => reject(new Error('无法解码图片'))
     img.src = dataUrl
   })
 }
 
-/** 文件大小上限（字节）。默认 8MB，超出提示。 */
+function positiveSvgLength(value: string | null): number | null {
+  if (!value || /%$/.test(value.trim())) return null
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function parseSvg(svgText: string): XMLDocument {
+  const document = new DOMParser().parseFromString(svgText, 'image/svg+xml')
+  if (document.documentElement.localName !== 'svg' || document.querySelector('parsererror')) throw new Error('SVG 文件格式无效')
+  return document
+}
+
+export function readSvgSize(svgText: string): { width: number; height: number } {
+  const root = parseSvg(svgText).documentElement
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  if (viewBox?.length === 4 && viewBox.every(Number.isFinite) && (viewBox[2] ?? 0) > 0 && (viewBox[3] ?? 0) > 0) {
+    return { width: viewBox[2] as number, height: viewBox[3] as number }
+  }
+  const width = positiveSvgLength(root.getAttribute('width'))
+  const height = positiveSvgLength(root.getAttribute('height'))
+  if (width && height) return { width, height }
+  throw new Error('SVG 必须提供有效的 viewBox 或 width/height')
+}
+
+export function sanitizeSvg(svgText: string): string {
+  const document = parseSvg(svgText)
+  document.querySelectorAll('script,foreignObject,iframe,object,embed').forEach((node) => node.remove())
+  document.querySelectorAll('*').forEach((node) => {
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase()
+      const value = attribute.value.trim()
+      if (name.startsWith('on') || ((name === 'href' || name.endsWith(':href')) && !value.startsWith('#') && !value.startsWith('data:image/'))) {
+        node.removeAttribute(attribute.name)
+      }
+    }
+  })
+  return new XMLSerializer().serializeToString(document.documentElement)
+}
+
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 export function exceedsSizeLimit(file: File, limit = MAX_UPLOAD_BYTES): boolean {
   return file.size > limit
 }
 
-/** 合并读图：把文件读成 dataURL + 像素尺寸。 */
-export async function uploadPngFile(file: File): Promise<{ dataUrl: string; width: number; height: number }> {
+export async function uploadMapImage(file: File): Promise<UploadedMapImage> {
   if (exceedsSizeLimit(file)) throw new Error('图片超过 8MB 上限')
-  if (!isPng(file)) throw new Error('只支持 PNG 图片')
+  const svgText = !isPng(file) ? await file.text() : ''
+  if (isSvg(file) || /^\s*(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(svgText)) {
+    const { width, height } = readSvgSize(svgText)
+    const sanitized = sanitizeSvg(svgText)
+    return {
+      dataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sanitized)}`,
+      width,
+      height,
+      mediaType: 'svg',
+    }
+  }
+  if (!isPng(file)) throw new Error('只支持 PNG 或 SVG 图片')
   const dataUrl = await fileToDataURL(file)
   const { width, height } = await readImageSize(dataUrl)
-  return { dataUrl, width, height }
+  return { dataUrl, width, height, mediaType: 'bitmap' }
 }

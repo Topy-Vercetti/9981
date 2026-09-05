@@ -21,7 +21,16 @@ import type {
   ClusterView,
   TileView,
 } from './spatial-view';
-import type { MapData } from '../../../play/map/types';
+import {
+  DEFAULT_MAP_SCALE,
+  deriveLayerId,
+  inferMapImageMediaType,
+  normalizeMapDocument,
+  type CanonicalMapData,
+  type MapData,
+  type MapDataDocument,
+  type MapLayer,
+} from '../../../play/map/types';
 import type { ReadOnlySemanticProjection, ResourceDescriptor } from '../../../l2/model/projection';
 import type { UiResult } from '../../model/diagnostic';
 import type { SpatialSalienceView } from './salience-extension';
@@ -29,15 +38,18 @@ import type { SpatialSalienceView } from './salience-extension';
 /**
  * 将 MapData 节点转为 NodeView
  */
-export function nodeFromMapNode(node: MapData['nodes'][0], _mapData: MapData): NodeView {
+export function nodeFromMapNode(
+  node: MapData['nodes'][0] | CanonicalMapData['nodes'][0],
+  _mapData: MapDataDocument,
+): NodeView {
   return {
     id: node.id,
     def: node.def ?? `d:scene/${node.scale}`,
     at: { x: node.at.x, y: node.at.y },
     scale: node.scale,
     name: node.name,
-    floor: node.floor ?? 0,
-    layerId: node.parent, // 使用 parent 作为 layerId（地图中尚未有正式 layerId 字段）
+    floor: 'floor' in node ? node.floor : _mapData.schemaVersion === '2.0' ? _mapData.layers.findIndex((layer) => layer.id === node.layerId) : 0,
+    layerId: 'layerId' in node ? node.layerId : deriveLayerId(node.floor ?? 0),
   };
 }
 
@@ -66,14 +78,36 @@ export function layerFromFloor(floorIndex: number, floor: number): LayerView {
     name: `楼层 ${floor}`,
     height: floor,
     opacity: 1,
+    backdrop: undefined,
+    transform: undefined,
+    standardCharacterWidth: DEFAULT_MAP_SCALE.standardCharacterWidth,
   };
 }
 
-/**
- * 从 MapData 生成图层列表
- */
-export function layersFromMapData(mapData: MapData): LayerView[] {
-  return mapData.floors.map((floor, index) => layerFromFloor(index, floor));
+export function layerFromMapLayer(layer: MapLayer, standardCharacterWidth: number): LayerView {
+  return {
+    id: layer.id,
+    name: layer.name ?? layer.id,
+    height: layer.height,
+    opacity: 1,
+    backdrop: layer.backdrop
+      ? {
+          image: layer.backdrop.image,
+          mediaType: layer.backdrop.mediaType ?? inferMapImageMediaType(layer.backdrop.image),
+          width: layer.backdrop.pixelWidth,
+          height: layer.backdrop.pixelHeight,
+        }
+      : undefined,
+    transform: layer.transform ? { ...layer.transform } : undefined,
+    standardCharacterWidth,
+  };
+}
+
+/** 从 legacy/canonical 地图的规范化 layers 生成图层列表。 */
+export function layersFromMapData(mapData: MapDataDocument): LayerView[] {
+  const canonical = normalizeMapDocument(mapData);
+  const width = canonical.mapScale?.standardCharacterWidth ?? DEFAULT_MAP_SCALE.standardCharacterWidth;
+  return canonical.layers.map((layer) => layerFromMapLayer(layer, width));
 }
 
 /**
@@ -115,13 +149,14 @@ export function entitiesFromSemanticProjection(
  * 未来 canonical MapData 会包含 layers。
  */
 export function createSpatialProjection(
-  mapData: MapData,
+  mapData: MapDataDocument,
   projection: ReadOnlySemanticProjection
 ): SpatialProjection {
-  const layers: LayerView[] = layersFromMapData(mapData);
-  const nodes: NodeView[] = mapData.nodes.map((n) => nodeFromMapNode(n, mapData));
-  const edges: EdgeView[] = mapData.edges.map((e) => edgeFromMapEdge(e, mapData));
-  const entities: EntityView[] = entitiesFromSemanticProjection(projection, mapData);
+  const canonical = normalizeMapDocument(mapData);
+  const layers: LayerView[] = layersFromMapData(canonical);
+  const nodes: NodeView[] = canonical.nodes.map((node) => nodeFromMapNode(node, canonical));
+  const edges: EdgeView[] = canonical.edges.map((edge) => edgeFromMapEdge(edge, canonical as unknown as MapData));
+  const entities: EntityView[] = entitiesFromSemanticProjection(projection, canonical as unknown as MapData);
 
   return Object.freeze({
     revision: projection.semanticStateFingerprint.length,

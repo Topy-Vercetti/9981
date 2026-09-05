@@ -9,6 +9,9 @@
    ========================================================================= */
 
 export const WORLD = { w: 1600, h: 1000 }
+export const STANDARD_CHARACTER_WIDTH = 80
+
+export type MapImageMediaType = 'bitmap' | 'svg'
 
 export type Mode = 'select' | 'place' | 'edge' | 'sample' | 'playtest'
 
@@ -48,6 +51,8 @@ export const SCALE_LABEL: Record<Scale, string> = {
 /** 图层背景图（全屏铺底 / 局部贴纸），渲染与导出用。image 为 dataURL 或资源路径。 */
 export interface LayerBackdrop {
   image: string
+  mediaType?: MapImageMediaType
+  /** 位图为像素尺寸，SVG 为 viewBox 或明确 width/height 尺寸。 */
   pixelWidth: number
   pixelHeight: number
 }
@@ -191,6 +196,8 @@ export interface BuildingGroup {
 export interface MapDoc {
   id: string
   name: string
+  /** 世界坐标中的标准角色宽度；网格一格严格等于该值。 */
+  mapScale?: { standardCharacterWidth: number }
   /** 图层数据本身（名称/高度）是文档数据；"当前正在编辑哪一层"是编辑器视图
    *  状态，不放在这里——否则切换图层会污染撤销历史，见 editor-store 的
    *  `State.currentLayerId`。 */
@@ -215,6 +222,7 @@ export interface MapData {
   schemaVersion: '2.0'
   id: string
   name: string
+  mapScale?: { standardCharacterWidth: number }
   layers: Array<{
     id: string
     name: string

@@ -115,6 +115,17 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
     findings.push(...validateBuildingGroups((map as { readonly buildingGroups?: readonly BuildingGroup[] }).buildingGroups));
   }
 
+  const scale = map.mapScale?.standardCharacterWidth;
+  if (scale !== undefined && (!Number.isFinite(scale) || scale <= 0)) {
+    findings.push({
+      code: 'MAP_INVALID_STANDARD_CHARACTER_WIDTH',
+      severity: 'error',
+      path: '/mapScale/standardCharacterWidth',
+      message: '地图比例尺中的标准角色宽度必须是有限正数。',
+      correction: '填写大于 0 的归一化宽度；默认一格为地图宽度的 0.05。',
+    });
+  }
+
   // ---- 节点 ---------------------------------------------------------------
   map.nodes.forEach((node, index) => {
     const path = `/nodes/${index}`;
@@ -146,7 +157,7 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
     // 内不再重复报，避免同一条诊断出现两次。
   });
 
-  // ---- 父子嵌套 -----------------------------------------------------------
+  // ---- 父子嵌�� -----------------------------------------------------------
   for (const [index, node] of map.nodes.entries()) {
     if (node.parent === undefined) continue;
     const path = `/nodes/${index}/parent`;
@@ -338,7 +349,7 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
         message: `放置「${placement.id}」的覆写用了保留键名「${key}」。`,
         correction:
           `${EXPR_DISCRIMINANT_KEYS.join('、')} 这几个键名会被表达式求值器当成表达式而不是数据，`
-          + `导致这个值被静默误解。换一个名字，例如「${key}Value」。`,
+          + `导致��个值被静默误解。换一个名字，例如「${key}Value」。`,
       });
     }
   });
@@ -631,7 +642,7 @@ export function validateLayerContract(map: MapDataDocument): readonly MapDiagnos
   if (!canonicalShape) return findings;
 
   const canonical = map as unknown as {
-    layers?: readonly { id?: string; height?: number }[];
+    layers?: readonly { id?: string; height?: number; backdrop?: MapLayer['backdrop'] }[];
     nodes: readonly { id: string; layerId?: string }[];
   };
   const layers = canonical.layers;
@@ -677,6 +688,17 @@ export function validateLayerContract(map: MapDataDocument): readonly MapDiagnos
     seenLayerIds.set(layer.id, index);
   });
   const layerIds = new Set(layers.map((layer) => layer.id).filter((id): id is string => Boolean(id)));
+
+  layers.forEach((layer, index) => {
+    if (layer.backdrop === undefined) return;
+    const path = `/layers/${index}/backdrop`;
+    if (!['bitmap', 'svg'].includes(layer.backdrop.mediaType ?? 'bitmap')) {
+      findings.push({ code: 'MAP_UNKNOWN_IMAGE_MEDIA_TYPE', severity: 'error', path: `${path}/mediaType`, subject: layer.id, message: `图层「${layer.id}」的图片媒介类型不受支持。`, correction: '媒介类型只能是 bitmap 或 svg。' });
+    }
+    if (!layer.backdrop.image || !Number.isFinite(layer.backdrop.pixelWidth) || !Number.isFinite(layer.backdrop.pixelHeight) || layer.backdrop.pixelWidth <= 0 || layer.backdrop.pixelHeight <= 0) {
+      findings.push({ code: 'MAP_INVALID_IMAGE_RESOURCE', severity: 'error', path, subject: layer.id, message: `图层「${layer.id}」的图片资源或固有尺寸无效。`, correction: '提供非空资源地址，以及大于 0 的固有宽高；SVG 应从 viewBox 或 width/height 取得尺寸。' });
+    }
+  });
 
   // 参与透视 height：有限且非负。
   layers.forEach((layer, index) => {

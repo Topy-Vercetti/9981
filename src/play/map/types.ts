@@ -166,11 +166,31 @@ export interface MapPlacement {
   readonly temporaryFree?: boolean;
 }
 
+/** 地图图像媒介。SVG 与位图在图层、变换和投影中完全同级。 */
+export type MapImageMediaType = 'bitmap' | 'svg';
+
+/** 地图比例尺：归一化地图坐标中，一个标准角色宽度占据的宽度。 */
+export interface MapScale {
+  readonly standardCharacterWidth: number;
+}
+
+/** 默认一格为编辑器世界宽度的 1/20（80 / 1600）。 */
+export const DEFAULT_MAP_SCALE: MapScale = { standardCharacterWidth: 0.05 };
+
+/** 从资源地址推断旧数据的媒介类型。 */
+export function inferMapImageMediaType(image: string): MapImageMediaType {
+  return /^data:image\/svg\+xml(?:[;,]|$)/i.test(image) || /\.svg(?:[?#]|$)/i.test(image)
+    ? 'svg'
+    : 'bitmap';
+}
+
 /** 底图与切片清单。纯渲染信息。 */
 export interface MapBackdrop {
-  /** 底图资源相对路径。 */
+  /** 底图资源相对路径或 data URL。 */
   readonly image: string;
-  /** 底图像素尺寸，仅供渲染层换算；拓扑不依赖它。 */
+  /** 旧文档可省略；规范化后由资源地址推断并显式输出。 */
+  readonly mediaType?: MapImageMediaType;
+  /** 资源固有尺寸。字段名为兼容旧文档保留；SVG 使用 viewBox/width/height 尺寸。 */
   readonly pixelWidth: number;
   readonly pixelHeight: number;
   /** 切片行列数。整图未切片时为 1×1。 */
@@ -185,6 +205,8 @@ export interface MapData {
   readonly id: string;
   readonly name: string;
   readonly backdrop: MapBackdrop;
+  /** 缺失时按 DEFAULT_MAP_SCALE 兼容导入。 */
+  readonly mapScale?: MapScale;
   /** 声明用到的楼层号，升序。地面层为 0。 */
   readonly floors: readonly number[];
   readonly nodes: readonly MapNode[];
@@ -205,6 +227,8 @@ export interface MapData {
 /** 图层可选的背景图（全屏=固定比例尺铺满 / 局部=贴纸）。 */
 export interface LayerBackdrop {
   readonly image: string;
+  readonly mediaType?: MapImageMediaType;
+  /** 位图为像素尺寸，SVG 为 viewBox 或明确 width/height 尺寸。 */
   readonly pixelWidth: number;
   readonly pixelHeight: number;
 }
@@ -350,6 +374,7 @@ function clonePoint(point: Vec2): Vec2 {
 function cloneLayerBackdrop(backdrop: LayerBackdrop): LayerBackdrop {
   return {
     image: backdrop.image,
+    mediaType: backdrop.mediaType ?? inferMapImageMediaType(backdrop.image),
     pixelWidth: backdrop.pixelWidth,
     pixelHeight: backdrop.pixelHeight,
   };
@@ -384,10 +409,17 @@ function normalizeMapLayer(layer: {
 function normalizeMapBackdrop(backdrop: MapBackdrop): MapBackdrop {
   return {
     image: backdrop.image,
+    mediaType: backdrop.mediaType ?? inferMapImageMediaType(backdrop.image),
     pixelWidth: backdrop.pixelWidth,
     pixelHeight: backdrop.pixelHeight,
     tileRows: backdrop.tileRows,
     tileCols: backdrop.tileCols,
+  };
+}
+
+function normalizeMapScale(scale: MapScale | undefined): MapScale {
+  return {
+    standardCharacterWidth: scale?.standardCharacterWidth ?? DEFAULT_MAP_SCALE.standardCharacterWidth,
   };
 }
 
@@ -497,6 +529,7 @@ export function normalizeMapDocument(document: MapDataDocument): CanonicalMapDat
       id: document.id,
       name: document.name,
       backdrop: normalizeMapBackdrop(document.backdrop),
+      mapScale: normalizeMapScale(document.mapScale),
       layers: normalizeCanonicalLayers(document.layers),
       nodes: normalizeCanonicalNodes(document.nodes),
       edges: document.edges.map(normalizeMapEdge),
@@ -512,6 +545,7 @@ export function normalizeMapDocument(document: MapDataDocument): CanonicalMapDat
     id: document.id,
     name: document.name,
     backdrop: normalizeMapBackdrop(document.backdrop),
+    mapScale: normalizeMapScale(document.mapScale),
     layers: normalizeLegacyLayers(document),
     nodes: normalizeLegacyNodes(document.nodes),
     edges: document.edges.map(normalizeMapEdge),

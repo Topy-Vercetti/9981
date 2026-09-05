@@ -13,15 +13,15 @@
  * - 不发 RenderCommand
  */
 
-import type { MapData } from '../../../../play/map/types'
-import type { SpatialProjection, NodeView, EdgeView, EntityView, ClusterView } from '../spatial-view'
+import { DEFAULT_MAP_SCALE, inferMapImageMediaType, normalizeMapDocument, type MapDataDocument } from '../../../../play/map/types'
+import type { SpatialProjection, LayerView, NodeView, EdgeView, EntityView, ClusterView } from '../spatial-view'
 import type { SpatialEntityStore } from '../stores/spatial-entity-store'
 import type { ClusterStore } from '../stores/cluster-store'
 import type { BuildingScopeStore } from '../building-scope-store'
 import { deepFreeze } from '../stores/projection-store'
 
 export interface ProjectionBuilderDeps {
-  readonly mapData: MapData
+  readonly mapData: MapDataDocument
   readonly entities: SpatialEntityStore
   readonly clusters: ClusterStore
   readonly buildingScope: BuildingScopeStore
@@ -36,17 +36,35 @@ export class ProjectionBuilder {
   }
 
   build(): SpatialProjection {
-    const { mapData, entities, clusters, buildingScope, revision } = this.deps
+    const { entities, clusters, buildingScope, revision } = this.deps
+    const mapData = normalizeMapDocument(this.deps.mapData)
     const entitySnap = entities.current()
     const nodeById = new Map(mapData.nodes.map((n) => [n.id, n]))
+    const standardCharacterWidth = mapData.mapScale?.standardCharacterWidth ?? DEFAULT_MAP_SCALE.standardCharacterWidth
+    const layerViews: LayerView[] = mapData.layers.map((layer) => ({
+      id: layer.id,
+      name: layer.name ?? layer.id,
+      height: layer.height,
+      opacity: 1,
+      backdrop: layer.backdrop
+        ? {
+            image: layer.backdrop.image,
+            mediaType: layer.backdrop.mediaType ?? inferMapImageMediaType(layer.backdrop.image),
+            width: layer.backdrop.pixelWidth,
+            height: layer.backdrop.pixelHeight,
+          }
+        : undefined,
+      transform: layer.transform ? { ...layer.transform } : undefined,
+      standardCharacterWidth,
+    }))
     const nodeViews: NodeView[] = mapData.nodes.map((node) => ({
       id: node.id,
       def: node.def ?? `d:scene/${node.scale}`,
       at: { x: node.at.x, y: node.at.y },
       scale: node.scale,
       name: node.name,
-      floor: node.floor ?? 0,
-      layerId: node.parent,
+      floor: mapData.layers.findIndex((layer) => layer.id === node.layerId),
+      layerId: node.layerId,
     }))
 
     const edgeViews: EdgeView[] = mapData.edges.map((edge) => ({
@@ -83,7 +101,7 @@ export class ProjectionBuilder {
 
     return deepFreeze({
       revision,
-      layers: [],
+      layers: layerViews,
       nodes: nodeViews,
       edges: edgeViews,
       entities: entityViews,

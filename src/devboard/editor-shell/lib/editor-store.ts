@@ -101,6 +101,8 @@ interface State {
   camera: Camera
   /** 当前正在编辑的图层——编辑器视图状态，不进入 doc/历史记录 */
   currentLayerId: string
+  /** 新导入图片唯一一次的缩放态；点击画布空白后清空且不可恢复。 */
+  pendingLayerId: string | null
   sampleSlot: SampleSlot | null
   diagnostics: Diagnostic[]
   pulse: { id: string; n: number; level?: 'error' | 'warning' } | null
@@ -255,6 +257,7 @@ let state: State = {
   selection: [],
   camera: { x: 0, y: 0, w: WORLD.w, h: WORLD.h },
   currentLayerId: initialDoc.layers[0]?.id ?? '',
+  pendingLayerId: null,
   sampleSlot: null,
   diagnostics: validate(initialDoc),
   pulse: null,
@@ -444,8 +447,8 @@ export function updateLayer(id: string, patch: Partial<Layer>) {
   return true
 }
 export function removeLayer(id: string) {
-  const layers = state.doc.layers.filter((l) => l.id !== id)
-  if (layers.length === 0) return // 至少保留一层
+  const remaining = state.doc.layers.filter((l) => l.id !== id)
+  const layers = remaining.length > 0 ? remaining : [{ id: uid('ly'), name: '默认图层' }]
   const fallback = layers[0]
   if (!fallback) return
   const fallbackId = fallback.id
@@ -453,7 +456,9 @@ export function removeLayer(id: string) {
     n.layerId === id ? { ...n, layerId: fallbackId } : n,
   )
   setDoc({ ...state.doc, layers, sceneNodes })
-  if (state.currentLayerId === id) setState({ currentLayerId: fallbackId })
+  if (state.currentLayerId === id || state.pendingLayerId === id) {
+    setState({ currentLayerId: state.currentLayerId === id ? fallbackId : state.currentLayerId, pendingLayerId: null })
+  }
 }
 /** 两个图层间的跨层透明度（供 canvas 渲染用），只是 overlayOpacity 的便捷包装 */
 export function layerOpacity(layerId: string): number {
@@ -1180,6 +1185,7 @@ export function importMapData(data: CanonicalMapData) {
     diagnostics: validate(doc),
     camera: { x: 0, y: 0, w: WORLD.w, h: WORLD.h },
     currentLayerId: doc.layers[0]?.id ?? '',
+    pendingLayerId: null,
   })
   toast(`已载入地图「${data.name}」（${data.nodes.length} 节点）`, 'ok')
 }
@@ -1201,50 +1207,73 @@ export function importMapJson(json: string): boolean {
   }
 }
 
-/**
- * 从上传的 PNG 新建一个图层。
- * - 全屏：整张地图被该图铺满（backdrop 拉伸），仍可叠加别的局部图层。
- * - 局部：等比放入，可移动/缩放（backdrop + transform），作为一个独立图层。
- * 无论当前文档是否空图层都追加为新图层；若文档尚无任何图层则作为第一个全屏图层。
- */
+/** 导入一张 PNG/SVG 地图。空文档复用默认层，否则追加为局部地图层。 */
 export function addLayerFromImage(opts: {
   dataUrl: string
   pixelWidth: number
   pixelHeight: number
+  mediaType: 'bitmap' | 'svg'
   name?: string
-  category: '全屏' | '局部'
 }) {
-  const layerId = uid('ly')
-  const name = opts.name || '图层'
-  const existing = state.doc.layers
-
+  const reusable = state.doc.layers.length === 1
+    && !state.doc.layers[0]?.backdrop
+    && state.doc.sceneNodes.length === 0
+    && state.doc.edges.length === 0
+    && state.doc.placements.length === 0
+  const layerId = reusable ? state.doc.layers[0]?.id ?? uid('ly') : uid('ly')
+  const name = opts.name || '地图图层'
+  const factor = Math.min(state.camera.w / opts.pixelWidth, state.camera.h / opts.pixelHeight)
   const layer: Layer = {
     id: layerId,
     name,
-    // 全屏底图默认放在 height 0 参与透视；局部贴纸做成独立层(height 空)
-    height: opts.category === '全屏' ? 0 : undefined,
     backdrop: {
       image: opts.dataUrl,
+      mediaType: opts.mediaType,
       pixelWidth: opts.pixelWidth,
       pixelHeight: opts.pixelHeight,
     },
+    transform: {
+      scaleX: factor,
+      scaleY: factor,
+      tx: state.camera.x + (state.camera.w - opts.pixelWidth * factor) / 2,
+      ty: state.camera.y + (state.camera.h - opts.pixelHeight * factor) / 2,
+    },
   }
-  if (opts.category === '局部') {
-    // 局部贴纸等比放入：以原始宽高比在世界里铺一张（1/4 宽），可后续移动缩放。
-    const W = WORLD.w * 0.5
-    const H = (W * opts.pixelHeight) / Math.max(1, opts.pixelWidth)
-    layer.transform = { scaleX: W / WORLD.w, scaleY: H / WORLD.h, tx: 0, ty: 0 }
-  }
+  const layers = reusable ? [layer] : [...state.doc.layers, layer]
+  const next = { ...state.doc, layers }
+  setState({ doc: next, diagnostics: validate(next), currentLayerId: layerId, pendingLayerId: layerId, selection: [] })
+  toast(`已导入地图「${name}」；滚轮缩放，点击空白确定`, 'ok')
+}
 
-  const next = { ...state.doc, layers: [...existing, layer] }
-  past.length = 0
-  future.length = 0
-  setState({
-    doc: next,
-    diagnostics: validate(next),
-    currentLayerId: layerId,
-  })
-  toast(opts.category === '全屏' ? `已添加全屏底图图层「${name}」` : `已添加局部贴纸图层「${name}」`, 'ok')
+export function scalePendingLayer(factor: number) {
+  const id = state.pendingLayerId
+  if (!id || !Number.isFinite(factor) || factor <= 0) return
+  const next = {
+    ...state.doc,
+    layers: state.doc.layers.map((layer) => {
+      if (layer.id !== id || !layer.transform) return layer
+      const scale = Math.min(100, Math.max(0.001, layer.transform.scaleX * factor))
+      const centerX = layer.transform.tx + layer.backdrop.pixelWidth * layer.transform.scaleX / 2
+      const centerY = layer.transform.ty + layer.backdrop.pixelHeight * layer.transform.scaleY / 2
+      return {
+        ...layer,
+        transform: {
+          ...layer.transform,
+          scaleX: scale,
+          scaleY: scale,
+          tx: centerX - layer.backdrop.pixelWidth * scale / 2,
+          ty: centerY - layer.backdrop.pixelHeight * scale / 2,
+        },
+      }
+    }),
+  }
+  setDoc(next, false)
+}
+
+export function confirmPendingLayer() {
+  if (!state.pendingLayerId) return
+  setState({ pendingLayerId: null })
+  toast('地图比例已确定；如需移除请删除整个图层', 'ok')
 }
 
 export function newBlankMap() {
@@ -1269,6 +1298,7 @@ export function newBlankMap() {
     diagnostics: validate(doc),
     camera: { x: 0, y: 0, w: WORLD.w, h: WORLD.h },
     currentLayerId: layer.id,
+    pendingLayerId: null,
   })
   toast('已新建空白地图', 'info')
 }

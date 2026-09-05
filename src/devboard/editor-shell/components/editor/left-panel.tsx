@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { IconFolder, IconEye, IconEyeOff, IconPlus, IconChevronLeft, IconChevronRight, IconImage } from './icons'
+import { IconFolder, IconEye, IconEyeOff, IconPlus, IconChevronLeft, IconChevronRight, IconImage, IconTrash } from './icons'
 import { HoloScan, HoloStatic } from './fx'
 import { playSfx } from '@editor/lib/sound'
 import {
@@ -23,13 +23,14 @@ import {
   updateLayer,
   toast,
   addLayerFromImage,
+  removeLayer,
   addBuildingFloor,
   setBuildingFloorImage,
   setBuildingFloorOrdinal,
   bindBuildingPortal,
   removeBuildingFloor,
 } from '@editor/lib/editor-store'
-import { uploadPngFile, type UploadCategory } from '@editor/lib/file-upload'
+import { uploadMapImage } from '@editor/lib/file-upload'
 
 function SectionHeader({
   title,
@@ -230,9 +231,23 @@ function LayerRow({
           setCurrentLayer(layer.id)
         }}
         className={active ? 'text-success' : 'text-muted-foreground'}
+        aria-label={`切换到图层 ${layer.name}`}
       >
         {active ? <IconEye width={16} height={16} /> : <IconEyeOff width={16} height={16} />}
       </button>
+      {layer.backdrop && (
+        <button
+          onClick={() => {
+            playSfx('click')
+            removeLayer(layer.id)
+          }}
+          className="text-muted-foreground transition-colors hover:text-error"
+          aria-label={`删除图层 ${layer.name}`}
+          title="删除整个地图图层"
+        >
+          <IconTrash width={15} height={15} />
+        </button>
+      )}
     </div>
   )
 }
@@ -257,7 +272,7 @@ function Keycap({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** PNG 上传为图层：全屏底图（铺满）或局部贴纸（等比缩放可移动）。 */
+/** PNG/SVG 共用地图导入入口。首次导入与局部追加只在交互心智上不同。 */
 function LayerUploadButton() {
   const inputRef = useRef<HTMLInputElement>(null)
   return (
@@ -268,12 +283,12 @@ function LayerUploadButton() {
         className="mt-1 flex w-full items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-primary/80 transition-colors hover:text-primary"
       >
         <IconImage width={12} height={12} />
-        上传底图（全屏 / 局部）
+        导入地图（PNG / SVG）
       </button>
       <input
         ref={inputRef}
         type="file"
-        accept=".png,image/png"
+        accept=".png,.svg,image/png,image/svg+xml"
         className="hidden"
         onChange={async (e) => {
           const file = e.target.files?.[0]
@@ -281,24 +296,18 @@ function LayerUploadButton() {
           if (!file) return
           let loaded: ReturnType<typeof Object.assign>
           try {
-            loaded = await uploadPngFile(file)
+            loaded = await uploadMapImage(file)
           } catch (err) {
             playSfx('error')
             toast(`上传失败：${err instanceof Error ? err.message : String(err)}`, 'error')
             return
           }
-          // 选择类别：全屏（铺满整图）或局部（等比贴纸）
-          const category: UploadCategory = window.confirm(
-            '作为「全屏底图层」（铺满整张地图）？\n点「取消」则作为「局部贴纸图层」（等比缩放，可移动/缩放）。',
-          )
-            ? '全屏'
-            : '局部'
           addLayerFromImage({
             dataUrl: loaded.dataUrl,
             pixelWidth: loaded.width,
             pixelHeight: loaded.height,
-            name: file.name.replace(/\.png$/i, '') || '图层',
-            category,
+            mediaType: loaded.mediaType,
+            name: file.name.replace(/\.(png|svg)$/i, '') || '地图图层',
           })
           playSfx('success')
         }}
@@ -517,7 +526,7 @@ function BuildingGroupCard({ building }: { building: BuildingGroup }) {
     const file = event.target.files?.[0]
     const targetFloorId = event.currentTarget.getAttribute('data-target-floor')
     if (!file || !targetFloorId) return
-    const uploaded = await uploadPngFile(file)
+    const uploaded = await uploadMapImage(file)
     setBuildingFloorImage(building.id, targetFloorId, uploaded.dataUrl)
     toast(`已设置楼层图幅：${file.name}`, 'ok')
     event.currentTarget.value = ''

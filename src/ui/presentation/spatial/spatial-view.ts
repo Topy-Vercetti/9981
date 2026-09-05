@@ -18,8 +18,21 @@ import type { SpatialSalienceView } from './salience-extension';
 export interface LayerView {
   readonly id: string;
   readonly name: string;
-  readonly height: number;
+  readonly height: number | undefined;
   readonly opacity: number;
+  readonly backdrop: {
+    readonly image: string;
+    readonly mediaType: 'bitmap' | 'svg';
+    readonly width: number;
+    readonly height: number;
+  } | undefined;
+  readonly transform: {
+    readonly scaleX: number;
+    readonly scaleY: number;
+    readonly tx: number;
+    readonly ty: number;
+  } | undefined;
+  readonly standardCharacterWidth: number;
 }
 
 /** 场景节点视图：地图拓扑节点 → 渲染坐标。 */
