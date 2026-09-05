@@ -9,9 +9,8 @@ import {
 import { cssVars } from './tokens.js';
 import { blueprintCopy, serializeMapPublish } from '../editor/map-io.js';
 import { emptyLayer } from '../editor/workspace-state.js';
-import { canSetHeight, visibleLayers } from '../layers/layer-rules.js';
+import { visibleLayers } from '../layers/layer-rules.js';
 import type { MapLayer } from '../layers/layer-shapes.js';
-import { overlayOpacity } from '../layers/layer-shapes.js';
 import { createDeveloperHook } from '../ports/material-availability.js';
 import type { MapData, MapDiagnostic, MapEdge, MapNode, SceneScale, Vec2 } from '../ports/map-contracts.js';
 import { adjacencyOf, connectedGroups } from '../ports/map-contracts.js';
@@ -29,7 +28,7 @@ const materials = [
 ] as const;
 
 function initialLayers(): readonly MapLayer[] {
-  return [{ id: 'layer:ground', name: '地面层', height: 0 }, { id: 'layer:roof', name: '高架层', height: 1 }];
+  return [{ id: 'layer:ground', name: '地面层' }, { id: 'layer:roof', name: '高架层' }];
 }
 
 function selectionId(selection: string | null): string | null {
@@ -119,7 +118,7 @@ export function EditorApp(): JSX.Element {
     const byId = new Map<string, string>();
     const order = layers.map((layer) => layer.id);
     for (const node of map.nodes) {
-      // floor 与图层未建立硬映射；按 height 就近归类，仅用于画布裁剪效果（非权威）。
+      // floor 与图层未建立硬映射；按图层顺序就近归类，仅用于旧编辑器画布裁剪。
       const idx = Math.min(order.length - 1, node.floor);
       if (idx >= 0) byId.set(node.id, order[idx] ?? 'layer:ground');
     }
@@ -128,7 +127,7 @@ export function EditorApp(): JSX.Element {
 
   const enterMode = (nextMode: EditorMode) => { setMode(nextMode); setEdgeStart(null); setEdgeDraft(null); setEdgeSnapTarget(null); setDragging(null); setKnotDrag(null); setWindowDrag(null); setObsDrag(null); setBendingPoint(null); setBoxSelect(null); setBoxSelectCurrent(null); setSelection(null); };
   /**
-   * 唯一的写地图通道：把「旧值 → 新值」的变换提交进历史栈（redo 清空），再落到 state。
+   * 唯一的写地图通道：把「旧值 → 新��」的变换提交进历史栈（redo 清空），再落到 state。
    * §九 撤销 / 重做必要列：每个破坏性修改都入栈。message 可带不可带。
    */
   const changeMap = (mutate: (current: MapData) => MapData, message?: string) => {
@@ -502,12 +501,12 @@ export function EditorApp(): JSX.Element {
     <div className="workspace">
       <aside className="left-panel">
         <section><div className="panel-heading"><h2>已加载地图</h2><span>{maps.length}</span></div>{maps.map((item) => <GameButton variant="ghost" active={item.id === map.id} className="map-list-item" key={item.id} onClick={() => { changeMap(() => item, `已加载 ${item.name}。`); setSelection(null); }}><span>{item.name}</span><small>{item.nodes.length} 场景</small></GameButton>)}</section>
-        <section><div className="panel-heading"><h2>图层</h2><GameButton variant="icon" title="新建图层" onClick={newLayer}>＋</GameButton></div>{layers.map((layer) => <div className={`layer-row ${layer.id === currentLayerId ? 'active' : ''}`} key={layer.id}><GameButton variant="ghost" active={layer.id === currentLayerId} onClick={() => setCurrentLayerId(layer.id)}><span className="layer-dot" />{layer.name ?? layer.id}</GameButton><GameInput aria-label={`${layer.id} 高度`} type="number" value={layer.height ?? ''} placeholder="独立" onChange={(event) => { const height = event.target.value === '' ? undefined : Number(event.target.value); if (!canSetHeight(layers, layer.id, height)) { setNotice('参与透视的图层高度不可重复。'); return; } setLayers(layers.map((item) => item.id === layer.id ? { ...item, height } : item)); }} /></div>)}</section>
-        <section className="layer-note"><strong>当前：{currentLayer?.name ?? currentLayerId}</strong><span>可见 {visible.length}/{layers.length} 层</span><span>相邻透明度 {overlayOpacity(currentLayer?.height, 0) ?? '独立'}</span></section>
+        <section><div className="panel-heading"><h2>图层</h2><GameButton variant="icon" title="新建图层" onClick={newLayer}>＋</GameButton></div>{layers.map((layer) => <div className={`layer-row ${layer.id === currentLayerId ? 'active' : ''}`} key={layer.id}><GameButton variant="ghost" active={layer.id === currentLayerId} onClick={() => setCurrentLayerId(layer.id)}><span className="layer-dot" />{layer.name ?? layer.id}</GameButton></div>)}</section>
+        <section className="layer-note"><strong>当前：{currentLayer?.name ?? currentLayerId}</strong><span>当前层独占编辑 · {visible.length}/{layers.length}</span></section>
         <section className="shortcut-note">
           <span style={{ color: '#627383', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>快捷键</span>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1" style={{ color: '#627383', fontSize: '11px' }}>
-            <span>V/N/E/I/P 工具</span><span>空格/中键 平移</span>
+            <span>V/N/E/I/P 工具</span><span>拖空白 平移</span>
             <span>滚轮 缩放</span><span>Ctrl+Z 撤销</span>
             <span>Ctrl+Shift+Z 重做</span><span>Ctrl+S 导出</span>
             <span>Delete 删除选中</span><span>Tab 右栏开合</span>

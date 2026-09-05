@@ -30,11 +30,12 @@ export function screenToWorld(clientX: number, clientY: number): Vec | null {
  *  不是矩形 id）——一个场景可能有多个成员框，命中任意一个都等价于命中
  *  整个场景节点。 */
 export function sceneIdAtPoint(world: Vec): string | null {
-  const { doc } = getState()
+  const { doc, currentLayerId } = getState()
   // top-most first
   for (let i = doc.sceneBoxes.length - 1; i >= 0; i--) {
     const box = doc.sceneBoxes[i]
-    if (box && pointInRect(world, box)) return box.sceneId
+    const node = box ? doc.sceneNodes.find((candidate) => candidate.id === box.sceneId) : undefined
+    if (box && node?.layerId === currentLayerId && pointInRect(world, box)) return box.sceneId
   }
   return null
 }

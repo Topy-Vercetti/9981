@@ -14,7 +14,7 @@
    已验证的地图能进编辑器继续编辑。
    ========================================================================= */
 
-import { STANDARD_CHARACTER_WIDTH, WORLD, type MapDoc, type Layer, type SceneNode, type Edge, type BuildingGroup, type BuildingFloor } from './map-types'
+import { STANDARD_CHARACTER_WIDTH, WORLD, type MapDoc, type Layer, type SceneNode, type Edge } from './map-types'
 import { uid } from './editor-store'
 import type {
   CanonicalMapData,
@@ -22,7 +22,6 @@ import type {
   MapLayer,
   MapEdge,
   MapPlacement,
-  BuildingGroup as CanonicalBuildingGroup,
   SceneScale,
   Directionality,
 } from '../../ports/map-contracts'
@@ -62,7 +61,6 @@ function layerToCanonical(layer: Layer): MapLayer {
   return {
     id: layer.id,
     ...(layer.name !== undefined ? { name: layer.name } : {}),
-    ...(layer.height !== undefined ? { height: layer.height } : {}),
     ...(layer.backdrop !== undefined
       ? {
           backdrop: {
@@ -137,19 +135,6 @@ export function editorDocToCanonical(doc: MapDoc): CanonicalMapData {
     def: p.materialId,
   }))
 
-  const buildingGroups: CanonicalBuildingGroup[] = (doc.buildingGroups ?? []).map((group) => ({
-    id: group.id,
-    frame: { x: nx(group.frame.x), y: ny(group.frame.y), width: nx(group.frame.width), height: ny(group.frame.height) },
-    shell: group.shell,
-    floors: group.floors.map((floor) => ({
-      id: floor.id, ordinal: floor.ordinal, height: floor.height,
-      nodes: [...floor.nodes],
-      ...(floor.image !== undefined ? { image: floor.image } : {}),
-      ...(floor.frame !== undefined ? { frame: { x: nx(floor.frame.x), y: ny(floor.frame.y), width: nx(floor.frame.width), height: ny(floor.frame.height) } } : {}),
-    })),
-    portals: group.portals.map((portal) => ({ ...portal })),
-  }))
-
   return {
     schemaVersion: '2.0',
     id: doc.id,
@@ -160,7 +145,6 @@ export function editorDocToCanonical(doc: MapDoc): CanonicalMapData {
     nodes,
     edges,
     placements,
-    ...(buildingGroups.length ? { buildingGroups } : {}),
   }
 }
 
@@ -174,15 +158,10 @@ function fromDirectionality(d: Directionality): Edge['directionality'] {
   return d as Edge['directionality']
 }
 
-function canonicalLayerToEditor(layer: MapLayer, fallbackHeight?: number): Layer {
+function canonicalLayerToEditor(layer: MapLayer): Layer {
   const out: Layer = {
     id: layer.id,
     name: layer.name ?? '图层',
-    ...(layer.height !== undefined
-      ? { height: layer.height }
-      : fallbackHeight !== undefined
-        ? { height: fallbackHeight }
-        : {}),
     ...(layer.backdrop !== undefined ? { backdrop: { ...layer.backdrop } } : {}),
     ...(layer.transform !== undefined
       ? { transform: { ...layer.transform, tx: wx(layer.transform.tx), ty: wy(layer.transform.ty) } }
@@ -193,7 +172,7 @@ function canonicalLayerToEditor(layer: MapLayer, fallbackHeight?: number): Layer
 
 /** 把 canonical MapData 桥回编辑器 MapDoc（导入 / 继续编辑用）。 */
 export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
-  const layers: Layer[] = canonical.layers.map((l, i) => canonicalLayerToEditor(l, i))
+  const layers: Layer[] = canonical.layers.map(canonicalLayerToEditor)
 
   const layerOf = (layerId: string) =>
     layers.find((l) => l.id === layerId)?.id ?? layers[0]?.id ?? 'ly_0'
@@ -243,18 +222,6 @@ export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
   })
 
   // 放置：canonical placement.at 指向宿主节点；编辑器 placement 需要 sceneId 与坐标。
-  const buildingGroups: BuildingGroup[] = (canonical.buildingGroups ?? []).map((group) => ({
-    id: group.id,
-    frame: { x: wx(group.frame.x), y: wy(group.frame.y), width: wx(group.frame.width), height: wy(group.frame.height) },
-    shell: group.shell,
-    floors: group.floors.map((floor): BuildingFloor => ({
-      id: floor.id, ordinal: floor.ordinal, height: floor.height, nodes: [...floor.nodes],
-      ...(floor.image !== undefined ? { image: floor.image } : {}),
-      ...(floor.frame !== undefined ? { frame: { x: wx(floor.frame.x), y: wy(floor.frame.y), width: wx(floor.frame.width), height: wy(floor.frame.height) } } : {}),
-    })),
-    portals: group.portals.map((portal) => ({ ...portal })),
-  }))
-
   const placements = canonical.placements.flatMap((p) => {
     const host = sceneNodes.find((n) => n.id === p.at)
     if (!host) return []
@@ -280,6 +247,5 @@ export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
     obstructions: [],
     terrains: [],
     placements,
-    buildingGroups,
   }
 }

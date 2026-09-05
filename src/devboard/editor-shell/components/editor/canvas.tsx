@@ -66,7 +66,10 @@ import {
   applySampleToScene,
   toast,
   flyTo,
-  layerOpacity,
+  setCurrentLayer,
+  beginCrossLayerEdge,
+  completeCrossLayerEdge,
+  cancelCrossLayerEdge,
   scalePendingLayer,
   confirmPendingLayer,
   type Camera,
@@ -315,15 +318,17 @@ function SceneLabel({
         {node.scale.charAt(0).toUpperCase()}
       </text>
       <text
-        x={bbox.x + bbox.width / 2}
-        y={bbox.y + bbox.height + 20}
-        textAnchor="middle"
+        x={bbox.x + 18}
+        y={bbox.y + 26}
         fill="var(--foreground)"
-        fontSize={14}
+        fontSize={13}
         fontWeight={700}
         className="select-none"
       >
-        {node.name}
+        <title>{node.name}</title>
+        {node.name.length > Math.max(3, Math.floor((bbox.width - 62) / 13))
+          ? `${node.name.slice(0, Math.max(3, Math.floor((bbox.width - 62) / 13)))}…`
+          : node.name}
       </text>
     </g>
   )
@@ -410,6 +415,54 @@ function HighlightPoint({
           </text>
         </g>
       )}
+    </g>
+  )
+}
+
+function PortalEndpoint({
+  edge,
+  source,
+  target,
+  targetLayerName,
+  selected,
+}: {
+  edge: Edge
+  source: SceneNode
+  target: SceneNode
+  targetLayerName: string
+  selected: boolean
+}) {
+  const anchor = nodeAnchor(source.id, getState().doc)
+  return (
+    <g
+      transform={`translate(${anchor.x + 18} ${anchor.y - 18})`}
+      className="cursor-pointer"
+      role="button"
+      aria-label={`前往${targetLayerName}的${target.name}`}
+      tabIndex={0}
+      onPointerDown={(event) => {
+        event.stopPropagation()
+        selectOne('edge', edge.id)
+        setCurrentLayer(target.layerId)
+        flyTo({ x: target.at.x - 500, y: target.at.y - 380, w: 1000, h: 760 })
+        playSfx('toggle')
+      }}
+    >
+      <rect
+        x={-10}
+        y={-10}
+        width={20}
+        height={20}
+        rx={4}
+        fill="var(--panel)"
+        stroke={selected ? 'var(--edge-selected)' : 'var(--transition)'}
+        strokeWidth={2}
+        vectorEffect="non-scaling-stroke"
+      />
+      <text x={0} y={4} textAnchor="middle" fill="var(--transition)" fontSize={12} fontWeight={800}>
+        ↗
+      </text>
+      <title>{`前往 ${targetLayerName} · ${target.name}`}</title>
     </g>
   )
 }
@@ -594,6 +647,7 @@ export function Canvas() {
   const dragMaterial = useEditor((s) => s.dragMaterial)
   const currentLayerId = useEditor((s) => s.currentLayerId)
   const pendingLayerId = useEditor((s) => s.pendingLayerId)
+  const crossLayerEdgeDraft = useEditor((s) => s.crossLayerEdgeDraft)
 
   const selIds = new Set(selection.map((s) => s.id))
   const firstSelection = selection[0]
@@ -612,6 +666,7 @@ export function Canvas() {
     const down = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !isTyping()) spaceRef.current = true
       if (e.key === 'Alt') altRef.current = true
+      if (e.key === 'Escape' && !isTyping()) cancelCrossLayerEdge()
     }
     const up = (e: KeyboardEvent) => {
       if (e.code === 'Space') spaceRef.current = false
@@ -637,13 +692,15 @@ export function Canvas() {
       // placements (top)
       for (let i = d.placements.length - 1; i >= 0; i--) {
         const p = d.placements[i]
-        if (!p) continue
+        if (!p || d.sceneNodes.find((node) => node.id === p.sceneId)?.layerId !== getState().currentLayerId) continue
         if (pointInRect(w, { x: p.x - 18, y: p.y - 18, width: 36, height: 36 }))
           return { type: 'placement', id: p.id }
       }
       // transition windows
       for (const e of d.edges) {
-        if (e.transitionWindow) {
+        const fromLayer = d.sceneNodes.find((node) => node.id === e.from)?.layerId
+        const toLayer = d.sceneNodes.find((node) => node.id === e.to)?.layerId
+        if (fromLayer === getState().currentLayerId && toLayer === fromLayer && e.transitionWindow) {
           if (dist(w, e.transitionWindow) < TRANSITION_HIT_PX * wpp)
             return { type: 'transition', id: e.id }
         }
@@ -651,20 +708,22 @@ export function Canvas() {
       // highlight points (take priority over the box body they sit inside)
       for (let i = d.sceneNodes.length - 1; i >= 0; i--) {
         const n = d.sceneNodes[i]
-        if (!n) continue
+        if (!n || n.layerId !== getState().currentLayerId) continue
         const a = nodeAnchor(n.id, d)
         if (dist(w, a) < HIGHLIGHT_HIT_PX * wpp) return { type: 'scene', id: n.id }
       }
       // scene boxes
       for (let i = d.sceneBoxes.length - 1; i >= 0; i--) {
         const b = d.sceneBoxes[i]
-        if (!b) continue
+        if (!b || d.sceneNodes.find((node) => node.id === b.sceneId)?.layerId !== getState().currentLayerId) continue
         if (pointInRotatedRect(w, b, b.rotation ?? 0))
           return { type: 'scene', id: b.sceneId }
       }
       // edges
       for (const e of d.edges) {
-        if (!d.sceneNodes.some((n) => n.id === e.from) || !d.sceneNodes.some((n) => n.id === e.to))
+        const fromNode = d.sceneNodes.find((node) => node.id === e.from)
+        const toNode = d.sceneNodes.find((node) => node.id === e.to)
+        if (!fromNode || !toNode || fromNode.layerId !== getState().currentLayerId || toNode.layerId !== fromNode.layerId)
           continue
         const from = nodeAnchor(e.from, d)
         const to = nodeAnchor(e.to, d)
@@ -675,14 +734,14 @@ export function Canvas() {
       // obstructions
       for (let i = d.obstructions.length - 1; i >= 0; i--) {
         const o = d.obstructions[i]
-        if (!o) continue
+        if (!o || o.layerId !== getState().currentLayerId) continue
         if (pointInRotatedRect(w, o, o.rotation))
           return { type: 'obstruction', id: o.id }
       }
       // terrains
       for (let i = d.terrains.length - 1; i >= 0; i--) {
         const t = d.terrains[i]
-        if (!t) continue
+        if (!t || t.layerId !== getState().currentLayerId) continue
         if (pointInRotatedRect(w, t, t.rotation))
           return { type: 'terrain', id: t.id }
       }
@@ -765,6 +824,12 @@ export function Canvas() {
 
       if (mode === 'edge') {
         const sceneId = sceneIdAtPoint(w)
+        if (sceneId && getState().crossLayerEdgeDraft) {
+          const id = completeCrossLayerEdge(sceneId)
+          if (id) playSfx('success')
+          else playSfx('warning')
+          return
+        }
         if (sceneId) {
           const anchor = nodeAnchor(sceneId, getState().doc)
           dragRef.current = { kind: 'edge', from: sceneId, raw: [anchor, w] }
@@ -845,10 +910,15 @@ export function Canvas() {
         return
       }
 
-      // empty: marquee select
-      if (!ev.shiftKey) clearSelection()
-      dragRef.current = { kind: 'marquee', start: w }
-      setPreview({ marquee: { x: w.x, y: w.y, width: 0, height: 0 } })
+      // 空白默认平移；只有 Ctrl（macOS 兼容 Meta）+拖拽才框选。
+      if (ev.ctrlKey || ev.metaKey) {
+        if (!ev.shiftKey) clearSelection()
+        dragRef.current = { kind: 'marquee', start: w }
+        setPreview({ marquee: { x: w.x, y: w.y, width: 0, height: 0 } })
+      } else {
+        if (!ev.shiftKey) clearSelection()
+        dragRef.current = { kind: 'pan', last: { x: ev.clientX, y: ev.clientY } }
+      }
     },
     [mode, toW, hitTest, waypointHit, singleEdgeSel, selection, selIds],
   )
@@ -994,9 +1064,17 @@ export function Canvas() {
             selectOne('edge', id)
             playSfx('success')
           } else {
-            // discard + red flash
-            playSfx('warning')
-            flashDiscard()
+            const layerTarget = document
+              .elementFromPoint(ev.clientX, ev.clientY)
+              ?.closest<HTMLElement>('[data-layer-id]')
+            const targetLayerId = layerTarget?.dataset.layerId
+            if (targetLayerId && beginCrossLayerEdge(drag.from, targetLayerId)) {
+              playSfx('click')
+              toast('已切换目标图层，请点击目标场景完成连接', 'info')
+            } else {
+              playSfx('warning')
+              flashDiscard()
+            }
           }
           setPreview({})
           break
@@ -1208,8 +1286,17 @@ export function Canvas() {
             : 'default'
 
   const nodeById = new Map(doc.sceneNodes.map((n) => [n.id, n]))
-  const opacityForLayer = (layerId: string) =>
-    layerId === currentLayerId ? 1 : layerOpacity(layerId)
+  const currentSceneIds = new Set(
+    doc.sceneNodes.filter((node) => node.layerId === currentLayerId).map((node) => node.id),
+  )
+  const sameLayerEdges = doc.edges.filter(
+    (edge) => currentSceneIds.has(edge.from) && currentSceneIds.has(edge.to),
+  )
+  const crossLayerEdges = doc.edges.filter((edge) => {
+    const from = nodeById.get(edge.from)
+    const to = nodeById.get(edge.to)
+    return from && to && from.layerId !== to.layerId && (from.layerId === currentLayerId || to.layerId === currentLayerId)
+  })
   const gridSize = doc.mapScale?.standardCharacterWidth ?? STANDARD_CHARACTER_WIDTH
 
   // B3：空洞全填——按 sceneId 分组的洞格子，仅在成员框集合变化时重算
@@ -1295,7 +1382,7 @@ export function Canvas() {
         />
 
         {/* SVG 与位图共用同一图层渲染和等比变换。已确认图层不再参与命中。 */}
-        {doc.layers.map((layer) => {
+        {doc.layers.filter((layer) => layer.id === currentLayerId).map((layer) => {
           if (!layer.backdrop) return null
           const transform = layer.transform ?? { scaleX: 1, scaleY: 1, tx: 0, ty: 0 }
           const pending = layer.id === pendingLayerId
@@ -1304,7 +1391,6 @@ export function Canvas() {
               key={`backdrop-${layer.id}`}
               data-backdrop-layer={layer.id}
               transform={`translate(${transform.tx} ${transform.ty}) scale(${transform.scaleX} ${transform.scaleY})`}
-              opacity={opacityForLayer(layer.id)}
               pointerEvents={pending ? 'visiblePainted' : 'none'}
             >
               <image
@@ -1331,7 +1417,7 @@ export function Canvas() {
         })}
 
         {/* terrains (bottom) */}
-        {doc.terrains.map((t) => (
+        {doc.terrains.filter((item) => item.layerId === currentLayerId).map((t) => (
           <RotatableBox
             key={t.id}
             x={t.x}
@@ -1347,7 +1433,7 @@ export function Canvas() {
         ))}
 
         {/* obstructions */}
-        {doc.obstructions.map((o) => (
+        {doc.obstructions.filter((item) => item.layerId === currentLayerId).map((o) => (
           <RotatableBox
             key={o.id}
             x={o.x}
@@ -1362,29 +1448,8 @@ export function Canvas() {
           />
         ))}
 
-        {/* building group frames: independent branch bounds, never merged into scene boxes */}
-        {(doc.buildingGroups ?? []).map((building) => {
-          const selected = selIds.has(building.id)
-          return (
-            <rect
-              key={`building-${building.id}`}
-              x={building.frame.x}
-              y={building.frame.y}
-              width={building.frame.width}
-              height={building.frame.height}
-              fill="none"
-              stroke={selected ? 'var(--accent)' : 'var(--primary)'}
-              strokeDasharray="8 5"
-              strokeWidth={selected ? 3 : 2}
-              opacity={selected ? 0.9 : 0.45}
-              pointerEvents="none"
-              data-building-group={building.id}
-            />
-          )
-        })}
-
         {/* edges */}
-        {doc.edges.map((e) => (
+        {sameLayerEdges.map((e) => (
           <EdgePath
             key={e.id}
             e={e}
@@ -1395,9 +1460,8 @@ export function Canvas() {
         ))}
 
         {/* scene boxes */}
-        {doc.sceneBoxes.map((b) => {
+        {doc.sceneBoxes.filter((box) => currentSceneIds.has(box.sceneId)).map((b) => {
           const node = nodeById.get(b.sceneId)
-          const isCurrent = node ? node.layerId === currentLayerId : true
           return (
             <SceneBoxRect
               key={b.id}
@@ -1405,8 +1469,8 @@ export function Canvas() {
               selected={selIds.has(b.sceneId)}
               pulsing={pulse?.id === b.sceneId}
               dropTarget={dragMaterial?.overScene === b.sceneId}
-              opacity={node ? opacityForLayer(node.layerId) : 1}
-              interactive={isCurrent}
+              opacity={1}
+              interactive={Boolean(node)}
             />
           )
         })}
@@ -1415,8 +1479,7 @@ export function Canvas() {
             填充，不参与命中测试（仅提示"这里不能再嵌套放置"） */}
         <g className="pointer-events-none">
           {Array.from(holeCells.entries()).flatMap(([sceneId, cells]) => {
-            const node = nodeById.get(sceneId)
-            const op = node ? opacityForLayer(node.layerId) : 1
+            if (!currentSceneIds.has(sceneId)) return []
             return cells.map((cell, i) => (
               <rect
                 key={`${sceneId}-${i}`}
@@ -1425,9 +1488,9 @@ export function Canvas() {
                 width={cell.size}
                 height={cell.size}
                 fill="var(--primary)"
-                fillOpacity={0.14 * op}
+                fillOpacity={0.14}
                 stroke="var(--primary)"
-                strokeOpacity={0.22 * op}
+                strokeOpacity={0.22}
                 strokeWidth={1}
               />
             ))
@@ -1435,12 +1498,10 @@ export function Canvas() {
         </g>
 
         {/* scene labels + highlight points, once per node */}
-        {doc.sceneNodes.map((n) => {
+        {doc.sceneNodes.filter((node) => node.layerId === currentLayerId).map((n) => {
           const boxes = boxesOfScene(n.id, doc)
           const bbox = sceneGroupBBox(boxes)
           const anchor = nodeAnchor(n.id, doc)
-          const isCurrent = n.layerId === currentLayerId
-          const op = opacityForLayer(n.layerId)
           return (
             <g key={n.id}>
               {bbox && (
@@ -1448,7 +1509,7 @@ export function Canvas() {
                   node={n}
                   bbox={bbox}
                   selected={selIds.has(n.id)}
-                  opacity={op}
+                  opacity={1}
                 />
               )}
               <HighlightPoint
@@ -1456,15 +1517,35 @@ export function Canvas() {
                 anchor={anchor}
                 selected={selIds.has(n.id)}
                 edgeModeActive={mode === 'edge'}
-                opacity={op}
-                interactive={isCurrent}
+                opacity={1}
+                interactive
               />
             </g>
           )
         })}
 
+        {/* 跨层边不画长线，只在当前层端点显示可导航门户。 */}
+        {crossLayerEdges.map((edge) => {
+          const from = nodeById.get(edge.from)
+          const to = nodeById.get(edge.to)
+          if (!from || !to) return null
+          const source = from.layerId === currentLayerId ? from : to
+          const target = source.id === from.id ? to : from
+          const targetLayerName = doc.layers.find((layer) => layer.id === target.layerId)?.name ?? target.layerId
+          return (
+            <PortalEndpoint
+              key={`portal-${edge.id}-${source.id}`}
+              edge={edge}
+              source={source}
+              target={target}
+              targetLayerName={targetLayerName}
+              selected={selIds.has(edge.id)}
+            />
+          )
+        })}
+
         {/* transition windows */}
-        {doc.edges.map((e) =>
+        {sameLayerEdges.map((e) =>
           e.transitionWindow ? (
             <g
               key={`tw-${e.id}`}
@@ -1489,8 +1570,8 @@ export function Canvas() {
 
         {/* waypoints for the selected edge */}
         {singleEdgeSel &&
-          doc.sceneNodes.some((n) => n.id === singleEdgeSel.from) &&
-          doc.sceneNodes.some((n) => n.id === singleEdgeSel.to) &&
+          currentSceneIds.has(singleEdgeSel.from) &&
+          currentSceneIds.has(singleEdgeSel.to) &&
           (() => {
             const from = nodeAnchor(singleEdgeSel.from, doc)
             const to = nodeAnchor(singleEdgeSel.to, doc)
@@ -1520,7 +1601,7 @@ export function Canvas() {
           })()}
 
         {/* placements */}
-        {doc.placements.map((p) => {
+        {doc.placements.filter((placement) => currentSceneIds.has(placement.sceneId)).map((p) => {
           const label = getMaterialChar(p.materialId)
           return (
             <g
@@ -1660,6 +1741,20 @@ export function Canvas() {
       </svg>
 
       <Toolbar />
+      {crossLayerEdgeDraft && (
+        <div className="hud-b chamfer absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 bg-panel/95 px-4 py-2 text-xs text-foreground shadow-lg">
+          <span>
+            从「{doc.layers.find((layer) => layer.id === crossLayerEdgeDraft.fromLayerId)?.name ?? '来源层'} · {doc.sceneNodes.find((node) => node.id === crossLayerEdgeDraft.fromSceneId)?.name ?? '来源场景'}」连接中，请点击目标场景
+          </span>
+          <button
+            type="button"
+            onClick={cancelCrossLayerEdge}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            取消
+          </button>
+        </div>
+      )}
       <Legend />
       {mode === 'playtest' && <PlaytestOverlay />}
       {discard && (

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { ProjectionBuilder } from '../stores/projection-builder'
 import { SpatialEntityStore } from '../stores/spatial-entity-store'
 import { ClusterStore } from '../stores/cluster-store'
-import { BuildingScopeStore } from '../building-scope-store'
 import type { CanonicalMapData, MapData } from '../../../../play/map/types'
 
 const fixtureMap = (): MapData => ({
@@ -26,12 +25,10 @@ describe('ProjectionBuilder (P3)', () => {
     const entities = new SpatialEntityStore()
     entities.update({ entityId: 'e1', nodeId: 'n1' }, 1)
     const clusters = new ClusterStore()
-    const buildingScope = new BuildingScopeStore()
     const builder = new ProjectionBuilder({
       mapData: fixtureMap(),
       entities,
       clusters,
-      buildingScope,
       revision: 5,
     })
     const proj = builder.build()
@@ -57,7 +54,7 @@ describe('ProjectionBuilder (P3)', () => {
       edges: [],
       placements: [],
     }
-    const projection = new ProjectionBuilder({ mapData: map, entities: new SpatialEntityStore(), clusters: new ClusterStore(), buildingScope: new BuildingScopeStore(), revision: 1 }).build()
+    const projection = new ProjectionBuilder({ mapData: map, entities: new SpatialEntityStore(), clusters: new ClusterStore(), revision: 1 }).build()
     expect(projection.layers.map((layer) => layer.backdrop?.mediaType)).toEqual(['bitmap', 'svg'])
     expect(projection.layers[1]?.transform).toEqual({ scaleX: 2, scaleY: 2, tx: 0.1, ty: 0.2 })
     expect(projection.layers[1]?.standardCharacterWidth).toBe(0.04)
@@ -69,12 +66,10 @@ describe('ProjectionBuilder (P3)', () => {
     const entities = new SpatialEntityStore()
     entities.update({ entityId: 'e1', nodeId: 'n1' }, 1)
     entities.update({ entityId: 'e1', nodeId: 'n2' }, 2)
-    const buildingScope = new BuildingScopeStore()
     const builder = new ProjectionBuilder({
       mapData: fixtureMap(),
       entities,
       clusters: new ClusterStore(),
-      buildingScope,
       revision: 2,
     })
     const proj = builder.build()
@@ -87,12 +82,10 @@ describe('ProjectionBuilder (P3)', () => {
     clusters.apply({
       type: 'created', microSceneId: 'm1', center: { x: 0.5, y: 0.5 }, entityIds: ['e1', 'e2'], revision: 1,
     })
-    const buildingScope = new BuildingScopeStore()
     const builder = new ProjectionBuilder({
       mapData: fixtureMap(),
       entities,
       clusters,
-      buildingScope,
       revision: 1,
     })
     const proj = builder.build()
@@ -105,12 +98,10 @@ describe('ProjectionBuilder (P3)', () => {
     const clusters = new ClusterStore({ fadeMs: 1000 })
     clusters.apply({ type: 'created', microSceneId: 'm1', center: { x: 0, y: 0 }, entityIds: ['e1'], revision: 1 })
     clusters.apply({ type: 'destroyed', microSceneId: 'm1', revision: 2 })
-    const buildingScope = new BuildingScopeStore()
     const builder = new ProjectionBuilder({
       mapData: fixtureMap(),
       entities,
       clusters,
-      buildingScope,
       revision: 2,
     })
     const proj = builder.build()

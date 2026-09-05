@@ -18,8 +18,6 @@ import type { SpatialSalienceView } from './salience-extension';
 export interface LayerView {
   readonly id: string;
   readonly name: string;
-  readonly height: number | undefined;
-  readonly opacity: number;
   readonly backdrop: {
     readonly image: string;
     readonly mediaType: 'bitmap' | 'svg';
@@ -94,6 +92,4 @@ export interface SpatialProjection {
   readonly entities: readonly EntityView[];
   readonly clusters: readonly ClusterView[];
   readonly tiles: readonly TileView[];
-  /** 建筑视野渲染模式：exterior / hover / transition / occupied */
-  readonly buildingRenderMode: import('./building-scope-state').BuildingRenderMode;
 }

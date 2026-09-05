@@ -17,14 +17,12 @@ import { DEFAULT_MAP_SCALE, inferMapImageMediaType, normalizeMapDocument, type M
 import type { SpatialProjection, LayerView, NodeView, EdgeView, EntityView, ClusterView } from '../spatial-view'
 import type { SpatialEntityStore } from '../stores/spatial-entity-store'
 import type { ClusterStore } from '../stores/cluster-store'
-import type { BuildingScopeStore } from '../building-scope-store'
 import { deepFreeze } from '../stores/projection-store'
 
 export interface ProjectionBuilderDeps {
   readonly mapData: MapDataDocument
   readonly entities: SpatialEntityStore
   readonly clusters: ClusterStore
-  readonly buildingScope: BuildingScopeStore
   readonly revision: number
 }
 
@@ -36,7 +34,7 @@ export class ProjectionBuilder {
   }
 
   build(): SpatialProjection {
-    const { entities, clusters, buildingScope, revision } = this.deps
+    const { entities, clusters, revision } = this.deps
     const mapData = normalizeMapDocument(this.deps.mapData)
     const entitySnap = entities.current()
     const nodeById = new Map(mapData.nodes.map((n) => [n.id, n]))
@@ -44,8 +42,6 @@ export class ProjectionBuilder {
     const layerViews: LayerView[] = mapData.layers.map((layer) => ({
       id: layer.id,
       name: layer.name ?? layer.id,
-      height: layer.height,
-      opacity: 1,
       backdrop: layer.backdrop
         ? {
             image: layer.backdrop.image,
@@ -107,7 +103,6 @@ export class ProjectionBuilder {
       entities: entityViews,
       clusters: clusterViews,
       tiles: [],
-      buildingRenderMode: buildingScope.current().mode,
     })
   }
 }

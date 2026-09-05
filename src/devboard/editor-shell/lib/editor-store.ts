@@ -22,7 +22,6 @@ import {
   boxesOfScene,
   sceneGroupBBox,
   recomputeAggregation,
-  overlayOpacity,
   foreignSceneIdsTouchedByRect,
   foreignSceneIdsTouchedByGroup,
   computeHoleCells,
@@ -42,9 +41,6 @@ import {
   type EdgePoint,
   type Scale,
   type MapData,
-  type BuildingGroup,
-  type BuildingFloor,
-  type BuildingFrame,
 } from './map-types'
 import { rdp } from './geometry'
 import { canonicalToEditorDoc, editorDocToCanonical } from './map-bridge'
@@ -103,6 +99,8 @@ interface State {
   currentLayerId: string
   /** 新导入图片唯一一次的缩放态；点击画布空白后清空且不可恢复。 */
   pendingLayerId: string | null
+  /** 跨层接力连线只属于编辑视图，不进入地图 JSON 或撤销历史。 */
+  crossLayerEdgeDraft: { fromSceneId: string; fromLayerId: string } | null
   sampleSlot: SampleSlot | null
   diagnostics: Diagnostic[]
   pulse: { id: string; n: number; level?: 'error' | 'warning' } | null
@@ -123,8 +121,8 @@ function seedDoc(): MapDoc {
   const groundLayerId = 'ly_ground'
   const roofLayerId = 'ly_roof'
   const layers: Layer[] = [
-    { id: groundLayerId, name: '地面层', height: 0 },
-    { id: roofLayerId, name: '车顶层', height: 1 },
+    { id: groundLayerId, name: '地面层' },
+    { id: roofLayerId, name: '车顶层' },
   ]
 
   const platformBox: SceneBox = {
@@ -202,7 +200,6 @@ function seedDoc(): MapDoc {
     obstructions: [],
     terrains: [],
     placements: [],
-    buildingGroups: [],
   }
 
   const edges: Edge[] = [
@@ -237,6 +234,7 @@ function seedDoc(): MapDoc {
     obstructions: [
       {
         id: 'ob_1',
+        layerId: groundLayerId,
         type: 'visual',
         x: 700,
         y: 420,
@@ -258,6 +256,7 @@ let state: State = {
   camera: { x: 0, y: 0, w: WORLD.w, h: WORLD.h },
   currentLayerId: initialDoc.layers[0]?.id ?? '',
   pendingLayerId: null,
+  crossLayerEdgeDraft: null,
   sampleSlot: null,
   diagnostics: validate(initialDoc),
   pulse: null,
@@ -365,7 +364,11 @@ export function toast(
 
 /* ---------------- mode / selection ---------------- */
 export function setMode(mode: Mode) {
-  setState({ mode, selection: mode === 'select' ? state.selection : [] })
+  setState({
+    mode,
+    selection: mode === 'select' ? state.selection : [],
+    crossLayerEdgeDraft: mode === 'edge' ? state.crossLayerEdgeDraft : null,
+  })
 }
 export function setSelection(sel: Selectable[]) {
   setState({ selection: sel })
@@ -375,6 +378,31 @@ export function selectOne(type: Selectable['type'], id: string) {
 }
 export function clearSelection() {
   if (state.selection.length) setState({ selection: [] })
+}
+export function beginCrossLayerEdge(fromSceneId: string, targetLayerId: string) {
+  const source = state.doc.sceneNodes.find((node) => node.id === fromSceneId)
+  if (!source || source.layerId === targetLayerId) return false
+  if (!state.doc.layers.some((layer) => layer.id === targetLayerId)) return false
+  setState({
+    crossLayerEdgeDraft: { fromSceneId, fromLayerId: source.layerId },
+    currentLayerId: targetLayerId,
+    selection: [],
+  })
+  return true
+}
+export function cancelCrossLayerEdge() {
+  if (state.crossLayerEdgeDraft) setState({ crossLayerEdgeDraft: null })
+}
+export function completeCrossLayerEdge(toSceneId: string): string | null {
+  const draft = state.crossLayerEdgeDraft
+  const target = state.doc.sceneNodes.find((node) => node.id === toSceneId)
+  if (!draft || !target || target.id === draft.fromSceneId || target.layerId === draft.fromLayerId) return null
+  const id = addEdge(draft.fromSceneId, target.id, [
+    nodeAnchor(draft.fromSceneId, state.doc),
+    nodeAnchor(target.id, state.doc),
+  ])
+  setState({ crossLayerEdgeDraft: null, selection: [{ type: 'edge', id }] })
+  return id
 }
 export function isSelected(id: string) {
   return state.selection.some((s) => s.id === id)
@@ -409,7 +437,24 @@ export function flyTo(cam: Camera, ms = 420) {
 /** 切到某图层（按 id）。传入的 index 落在图层数组范围之外时钉在最后一个
  *  图层——供数字键 1/2/3 快捷键调用。 */
 export function setCurrentLayer(layerId: string) {
-  setState({ currentLayerId: layerId })
+  if (!state.doc.layers.some((layer) => layer.id === layerId)) return
+  const sceneIds = new Set(
+    state.doc.sceneNodes.filter((node) => node.layerId === layerId).map((node) => node.id),
+  )
+  setState({
+    currentLayerId: layerId,
+    pendingLayerId: state.pendingLayerId === layerId ? state.pendingLayerId : null,
+    selection: state.selection.filter((item) => {
+      if (item.type === 'scene') return sceneIds.has(item.id)
+      if (item.type === 'placement') {
+        const placement = state.doc.placements.find((candidate) => candidate.id === item.id)
+        return placement ? sceneIds.has(placement.sceneId) : false
+      }
+      if (item.type === 'obstruction') return state.doc.obstructions.some((candidate) => candidate.id === item.id && candidate.layerId === layerId)
+      if (item.type === 'terrain') return state.doc.terrains.some((candidate) => candidate.id === item.id && candidate.layerId === layerId)
+      return item.type === 'edge'
+    }),
+  })
 }
 export function setCurrentLayerByIndex(index: number) {
   const layers = state.doc.layers
@@ -430,16 +475,6 @@ export function addLayer(name: string) {
   setState({ currentLayerId: layer.id })
 }
 export function updateLayer(id: string, patch: Partial<Layer>) {
-  // 高度冲突：另一层已经填了相同数值时拒绝写入
-  if (patch.height != null) {
-    const conflict = state.doc.layers.some(
-      (l) => l.id !== id && l.height === patch.height,
-    )
-    if (conflict) {
-      toast('该高度已被其它图层占用，请换一个数值', 'error')
-      return false
-    }
-  }
   setDoc({
     ...state.doc,
     layers: state.doc.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)),
@@ -447,26 +482,40 @@ export function updateLayer(id: string, patch: Partial<Layer>) {
   return true
 }
 export function removeLayer(id: string) {
-  const remaining = state.doc.layers.filter((l) => l.id !== id)
+  const remaining = state.doc.layers.filter((layer) => layer.id !== id)
   const layers = remaining.length > 0 ? remaining : [{ id: uid('ly'), name: '默认图层' }]
-  const fallback = layers[0]
-  if (!fallback) return
-  const fallbackId = fallback.id
-  const sceneNodes = state.doc.sceneNodes.map((n) =>
-    n.layerId === id ? { ...n, layerId: fallbackId } : n,
+  const fallbackId = layers[0]?.id ?? ''
+  const removedSceneIds = new Set(
+    state.doc.sceneNodes.filter((node) => node.layerId === id).map((node) => node.id),
   )
-  setDoc({ ...state.doc, layers, sceneNodes })
-  if (state.currentLayerId === id || state.pendingLayerId === id) {
-    setState({ currentLayerId: state.currentLayerId === id ? fallbackId : state.currentLayerId, pendingLayerId: null })
-  }
-}
-/** 两个图层间的跨层透明度（供 canvas 渲染用），只是 overlayOpacity 的便捷包装 */
-export function layerOpacity(layerId: string): number {
-  const cur = state.doc.layers.find((l) => l.id === state.currentLayerId)
-  const target = state.doc.layers.find((l) => l.id === layerId)
-  if (!cur || !target) return 1
-  if (target.id === cur.id) return 1
-  return overlayOpacity(cur, target)
+  const removedEdgeIds = new Set(
+    state.doc.edges
+      .filter((edge) => removedSceneIds.has(edge.from) || removedSceneIds.has(edge.to))
+      .map((edge) => edge.id),
+  )
+  setDoc({
+    ...state.doc,
+    layers,
+    sceneNodes: state.doc.sceneNodes.filter((node) => !removedSceneIds.has(node.id)),
+    sceneBoxes: state.doc.sceneBoxes.filter((box) => !removedSceneIds.has(box.sceneId)),
+    edges: state.doc.edges.filter((edge) => !removedEdgeIds.has(edge.id)),
+    placements: state.doc.placements.filter((placement) => !removedSceneIds.has(placement.sceneId)),
+    obstructions: state.doc.obstructions
+      .filter((item) => item.layerId !== id)
+      .map((item) => ({ ...item, affectsEdges: item.affectsEdges.filter((edgeId) => !removedEdgeIds.has(edgeId)) })),
+    terrains: state.doc.terrains.filter((item) => item.layerId !== id),
+  })
+  setState({
+    currentLayerId: state.currentLayerId === id ? fallbackId : state.currentLayerId,
+    pendingLayerId: state.pendingLayerId === id ? null : state.pendingLayerId,
+    crossLayerEdgeDraft:
+      state.crossLayerEdgeDraft?.fromLayerId === id ? null : state.crossLayerEdgeDraft,
+    selection: state.selection.filter((item) => {
+      if (item.type === 'scene' || item.type === 'placement') return !removedSceneIds.has(item.id)
+      if (item.type === 'edge') return !removedEdgeIds.has(item.id)
+      return true
+    }),
+  })
 }
 
 /* ---------------- pulse (diagnostic focus) ---------------- */
@@ -485,83 +534,6 @@ export function pulseElement(id: string, level?: 'error' | 'warning') {
  *  B3：落在其它场景的洞内、或同时压到两个不同场景 → 拒绝创建（返回
  *  `null`），并弹出对应 toast——调用方只需在收到 `null` 时播放错误反馈，
  *  不需要重复这套校验逻辑。 */
-export function addBuildingGroup(rect: BuildingFrame, shell = 'shell:default'): string {
-  const group: BuildingGroup = { id: uid('bg'), frame: { ...rect }, shell, floors: [], portals: [] }
-  setDoc({ ...state.doc, buildingGroups: [...(state.doc.buildingGroups ?? []), group] })
-  return group.id
-}
-
-export function addBuildingFloor(groupId: string, floor: Omit<BuildingFloor, 'id'> & { id?: string }): string | null {
-  const group = (state.doc.buildingGroups ?? []).find((item) => item.id === groupId)
-  if (!group) return null
-  const id = floor.id ?? uid('bf')
-  const nextFloor: BuildingFloor = { ...floor, id, nodes: [...floor.nodes] }
-  setDoc({ ...state.doc, buildingGroups: (state.doc.buildingGroups ?? []).map((item) => item.id === groupId ? { ...item, floors: [...item.floors, nextFloor] } : item) })
-  return id
-}
-
-export function updateBuildingGroupFrame(groupId: string, frame: BuildingFrame) {
-  setDoc({ ...state.doc, buildingGroups: (state.doc.buildingGroups ?? []).map((group) => group.id === groupId ? { ...group, frame: { ...frame } } : group) })
-}
-
-export function setBuildingGroupShell(groupId: string, shell: string) {
-  setDoc({ ...state.doc, buildingGroups: (state.doc.buildingGroups ?? []).map((group) => group.id === groupId ? { ...group, shell } : group) })
-}
-
-export function setBuildingFloorFrame(groupId: string, floorId: string, frame: BuildingFrame) {
-  setDoc({ ...state.doc, buildingGroups: (state.doc.buildingGroups ?? []).map((group) => group.id === groupId ? { ...group, floors: group.floors.map((floor) => floor.id === floorId ? { ...floor, frame: { ...frame } } : floor) } : group) })
-}
-
-export function setBuildingFloorImage(groupId: string, floorId: string, image: string) {
-  setDoc({
-    ...state.doc,
-    buildingGroups: (state.doc.buildingGroups ?? []).map((group) =>
-      group.id === groupId
-        ? { ...group, floors: group.floors.map((floor) => floor.id === floorId ? { ...floor, image } : floor) }
-        : group,
-    ),
-  })
-}
-
-export function setBuildingFloorOrdinal(groupId: string, floorId: string, ordinal: number) {
-  setDoc({
-    ...state.doc,
-    buildingGroups: (state.doc.buildingGroups ?? []).map((group) =>
-      group.id === groupId
-        ? { ...group, floors: group.floors.map((floor) => floor.id === floorId ? { ...floor, ordinal } : floor) }
-        : group,
-    ),
-  })
-}
-
-export function bindBuildingPortal(
-  groupId: string,
-  portal: { id?: string; from: string; to: string; def: string },
-): string | null {
-  const group = (state.doc.buildingGroups ?? []).find((item) => item.id === groupId)
-  if (!group) return null
-  const id = portal.id ?? uid('bp')
-  const next = { id, from: portal.from, to: portal.to, def: portal.def }
-  setDoc({
-    ...state.doc,
-    buildingGroups: (state.doc.buildingGroups ?? []).map((item) =>
-      item.id === groupId ? { ...item, portals: [...item.portals, next] } : item,
-    ),
-  })
-  return id
-}
-
-export function removeBuildingFloor(groupId: string, floorId: string) {
-  setDoc({
-    ...state.doc,
-    buildingGroups: (state.doc.buildingGroups ?? []).map((group) =>
-      group.id === groupId
-        ? { ...group, floors: group.floors.filter((floor) => floor.id !== floorId) }
-        : group,
-    ),
-  })
-}
-
 export function addScene(rect: {
   x: number
   y: number
@@ -947,6 +919,7 @@ export function addObstruction(
   const id = uid('ob')
   const ob: Obstruction = {
     id,
+    layerId: state.currentLayerId,
     type,
     x: at.x - 80,
     y: at.y - 50,
@@ -977,6 +950,7 @@ export function addTerrain(type: 'highland' | 'lowland', at: Vec): string {
   const id = uid('tr')
   const tr: Terrain = {
     id,
+    layerId: state.currentLayerId,
     type,
     x: at.x - 90,
     y: at.y - 60,
@@ -1288,7 +1262,6 @@ export function newBlankMap() {
     obstructions: [],
     terrains: [],
     placements: [],
-    buildingGroups: [],
   }
   past.length = 0
   future.length = 0

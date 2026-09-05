@@ -76,8 +76,6 @@ export function layerFromFloor(floorIndex: number, floor: number): LayerView {
   return {
     id: `floor:${floor}`,
     name: `楼层 ${floor}`,
-    height: floor,
-    opacity: 1,
     backdrop: undefined,
     transform: undefined,
     standardCharacterWidth: DEFAULT_MAP_SCALE.standardCharacterWidth,
@@ -88,8 +86,6 @@ export function layerFromMapLayer(layer: MapLayer, standardCharacterWidth: numbe
   return {
     id: layer.id,
     name: layer.name ?? layer.id,
-    height: layer.height,
-    opacity: 1,
     backdrop: layer.backdrop
       ? {
           image: layer.backdrop.image,
@@ -165,7 +161,6 @@ export function createSpatialProjection(
     edges: Object.freeze([...edges]),
     entities: Object.freeze([...entities]),
     clusters: [] as readonly ClusterView[],
-    buildingRenderMode: { kind: 'exterior' as const },
     tiles: [] as readonly TileView[],
   });
 }

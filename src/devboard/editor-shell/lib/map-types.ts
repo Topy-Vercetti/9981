@@ -19,7 +19,6 @@ export type Scale = 'large' | 'medium' | 'small'
 
 export type ElementType =
   | 'scene'
-  | 'building'
   | 'edge'
   | 'obstruction'
   | 'terrain'
@@ -65,11 +64,10 @@ export interface LayerTransform {
   ty: number
 }
 
-/** 图层。`height` 留空表示独立层——不参与跨层透明度叠加公式，恒不透明。 */
+/** 独立编辑图层。 */
 export interface Layer {
   id: string
   name: string
-  height?: number
   /** 全屏底图：拉伸铺满整张图。局部贴纸用 backdrop + transform 承载。 */
   backdrop?: LayerBackdrop
   transform?: LayerTransform
@@ -137,6 +135,7 @@ export interface Edge {
 
 export interface Obstruction {
   id: string
+  layerId: string
   type: 'visual' | 'physical'
   x: number
   y: number
@@ -148,6 +147,7 @@ export interface Obstruction {
 
 export interface Terrain {
   id: string
+  layerId: string
   type: 'highland' | 'lowland'
   x: number
   y: number
@@ -162,35 +162,6 @@ export interface Placement {
   sceneId: string
   x: number
   y: number
-}
-
-/** Editor-local building branch. Frames use world coordinates; the bridge normalizes them. */
-export interface BuildingFrame {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-export interface BuildingFloor {
-  id: string
-  ordinal: number
-  height: number
-  nodes: string[]
-  image?: string
-  frame?: BuildingFrame
-}
-export interface BuildingPortal {
-  id: string
-  from: string
-  to: string
-  def: string
-}
-export interface BuildingGroup {
-  id: string
-  frame: BuildingFrame
-  shell: string
-  floors: BuildingFloor[]
-  portals: BuildingPortal[]
 }
 
 export interface MapDoc {
@@ -208,8 +179,6 @@ export interface MapDoc {
   obstructions: Obstruction[]
   terrains: Terrain[]
   placements: Placement[]
-  /** Presentation-only building branches, independent from main map layers. */
-  buildingGroups?: BuildingGroup[]
 }
 
 export interface Selectable {
@@ -226,11 +195,9 @@ export interface MapData {
   layers: Array<{
     id: string
     name: string
-    height?: number
     backdrop?: LayerBackdrop
     transform?: LayerTransform
   }>
-  buildingGroups?: BuildingGroup[]
   nodes: Array<{
     id: string
     name: string
@@ -254,6 +221,7 @@ export interface MapData {
   }>
   obstructions: Array<{
     id: string
+    layerId: string
     type: 'visual' | 'physical'
     x: number
     y: number
@@ -330,14 +298,6 @@ export function nodeAnchor(nodeId: string, doc: MapDoc): Vec {
   return node.at
 }
 
-/** 图层系统的跨层透明度公式（B4）：两侧都填了 `height` 时，高度差每差 1
- *  透明度降 10%（`clamp(1 - |Δheight| * 0.1, 0, 1)`）；只要有一侧是"独立层"
- *  （`height` 留空），就不参与这套叠加换算，恒不透明——独立层���间互不透视。 */
-export function overlayOpacity(a: Layer, b: Layer): number {
-  if (a.height == null || b.height == null) return 1
-  const delta = Math.abs(a.height - b.height)
-  return Math.min(1, Math.max(0, 1 - delta * 0.1))
-}
 
 function rectsOverlap(
   a: { x: number; y: number; width: number; height: number },
@@ -486,7 +446,7 @@ export interface HoleCell {
  *  `gridSize` 世界单位光栅化，再从网格边界向内 flood-fill 未被任何成员框
  *  覆盖的格子——凡是flood-fill 无法从边界到达的未覆盖格，就是被完全包围
  *  在场景内部的"洞"（例如口字形拼接围出的天井）。只用于视觉高亮 + 阻止在
- *  洞内新建场景，不改动任何真实矩形数据。按 sceneId 分组返回，便于渲染时
+ *  洞内新建场景，不改动任何真实矩形数据。按 sceneId ���组返回，便于渲染时
  *  分别上色/命中测试时统一遍历。 */
 export function computeHoleCells(doc: MapDoc, gridSize = 20): Map<string, HoleCell[]> {
   const result = new Map<string, HoleCell[]>()

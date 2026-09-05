@@ -4,15 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { IconFolder, IconEye, IconEyeOff, IconPlus, IconChevronLeft, IconChevronRight, IconImage, IconTrash } from './icons'
 import { HoloScan, HoloStatic } from './fx'
 import { playSfx } from '@editor/lib/sound'
-import {
-  SCALE_LABEL,
-  nodeAnchor,
-  overlayOpacity,
-  type SceneNode,
-  type Layer,
-  type BuildingGroup,
-  type BuildingFloor,
-} from '@editor/lib/map-types'
+import { SCALE_LABEL, nodeAnchor, type SceneNode, type Layer } from '@editor/lib/map-types'
 import {
   useEditor,
   getState,
@@ -24,11 +16,6 @@ import {
   toast,
   addLayerFromImage,
   removeLayer,
-  addBuildingFloor,
-  setBuildingFloorImage,
-  setBuildingFloorOrdinal,
-  bindBuildingPortal,
-  removeBuildingFloor,
 } from '@editor/lib/editor-store'
 import { uploadMapImage } from '@editor/lib/file-upload'
 
@@ -134,52 +121,10 @@ function SceneCard({
   )
 }
 
-function LayerRow({
-  layer,
-  otherLayers,
-  count,
-  active,
-}: {
-  layer: Layer
-  /** 除自己外的其它图层，用于高度冲突校验（B4：两个参与透视的图层不能填
-   *  相同高度值——空值="独立层"不参与透视，天然不冲突）。 */
-  otherLayers: Layer[]
-  count: number
-  active: boolean
-}) {
-  const [draft, setDraft] = useState<string>(layer.height != null ? String(layer.height) : '')
-  const [err, setErr] = useState(false)
-
-  useEffect(() => {
-    setDraft(layer.height != null ? String(layer.height) : '')
-    setErr(false)
-  }, [layer.height])
-
-  function commit() {
-    if (draft.trim() === '') {
-      setErr(false)
-      updateLayer(layer.id, { height: undefined })
-      return
-    }
-    const n = Number(draft)
-    if (!Number.isFinite(n)) {
-      setErr(true)
-      playSfx('error')
-      return
-    }
-    const conflict = otherLayers.some((l) => l.height === n)
-    if (conflict) {
-      setErr(true)
-      playSfx('error')
-      toast(`高度 ${n} 已被其它图层占用，透视图层高度必须唯一`, 'error')
-      return
-    }
-    setErr(false)
-    updateLayer(layer.id, { height: n })
-  }
-
+function LayerRow({ layer, count, active }: { layer: Layer; count: number; active: boolean }) {
   return (
     <div
+      data-layer-id={layer.id}
       style={
         {
           '--hud-bc': active ? 'var(--success)' : 'var(--border)',
@@ -209,22 +154,6 @@ function LayerRow({
           {count} 场景
         </span>
       </button>
-      {/* 高度数字输入：留空 = 独立层，不参与跨层透视换算 */}
-      <input
-        type="number"
-        value={draft}
-        placeholder="独立层"
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-        }}
-        onClick={(e) => e.stopPropagation()}
-        title="高度（留空 = 独立层，不与其它图层叠加透视）"
-        className={`hud-field chamfer-sm chamfer w-16 px-1.5 py-1 text-center text-[11px] focus:outline-none focus:ring-1 ${
-          err ? 'ring-1 ring-error text-error' : 'focus:ring-primary'
-        }`}
-      />
       <button
         onClick={() => {
           playSfx('toggle')
@@ -259,7 +188,8 @@ const shortcuts = [
   { keys: ['I'], label: '取样材质' },
   { keys: ['P'], label: '运行测试' },
   { keys: ['1-9'], label: '切换图层' },
-  { keys: ['Space'], label: '按住平移' },
+  { keys: ['拖空白'], label: '平移画布' },
+  { keys: ['Ctrl', '拖空白'], label: '框选图元' },
   { keys: ['Del'], label: '删除选中' },
   { keys: ['Ctrl', 'Z / Y'], label: '撤销 / 重做' },
 ]
@@ -319,7 +249,6 @@ function LayerUploadButton() {
 export function LeftPanel() {
   const scenes = useEditor((s) => s.doc.sceneNodes)
   const layers = useEditor((s) => s.doc.layers)
-  const buildingGroups = useEditor((s) => s.doc.buildingGroups ?? [])
   const selection = useEditor((s) => s.selection)
   const currentLayerId = useEditor((s) => s.currentLayerId)
   const currentLayer = layers.find((l) => l.id === currentLayerId)
@@ -372,14 +301,14 @@ export function LeftPanel() {
           }
         />
         <div className="flex flex-col gap-2 px-3 pb-4">
-          {scenes.length === 0 && (
+          {scenes.filter((scene) => scene.layerId === currentLayerId).length === 0 && (
             <p className="px-1 py-6 text-center text-[12px] leading-relaxed text-muted-foreground">
               暂无场景。切换到「放置」工具，
               <br />
               在画布拖拽出一个场景区域。
             </p>
           )}
-          {scenes.map((s) => (
+          {scenes.filter((scene) => scene.layerId === currentLayerId).map((s) => (
             <SceneCard
               key={s.id}
               scene={s}
@@ -390,25 +319,10 @@ export function LeftPanel() {
         </div>
       </section>
 
-      {/* 建筑组分支 */}
-      <section className="rise-in border-b border-border" style={{ animationDelay: '90ms' }}>
-        <SectionHeader
-          title="建筑组"
-          extra={<span className="font-mono text-[11px] text-muted-foreground">{buildingGroups.length}</span>}
-        />
-        <div className="flex flex-col gap-2 px-3 pb-3">
-          {buildingGroups.length === 0 ? (
-            <p className="px-1 py-2 text-[11px] text-muted-foreground">在画布框选区域以创建建筑组。</p>
-          ) : buildingGroups.map((building) => (
-            <BuildingGroupCard key={building.id} building={building} />
-          ))}
-        </div>
-      </section>
-
-      {/* 图层与高度 */}
+      {/* 图层 */}
       <section className="rise-in border-b border-border" style={{ animationDelay: '110ms' }}>
         <SectionHeader
-          title="图层与高度"
+          title="图层"
           extra={
             <span className="font-mono text-[11px] text-muted-foreground">
               当前:{' '}
@@ -416,27 +330,11 @@ export function LeftPanel() {
             </span>
           }
         />
-        {/* 注记条（B4）：当前图层名 / 可见层数 / 与当前图层相邻透明度 */}
-        {currentLayer && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 font-mono text-[10.5px] text-muted-foreground">
-            <span>
-              可见 <span className="text-foreground/80">{layers.length}</span>/{layers.length} 层
-            </span>
-            {layers
-              .filter((l) => l.id !== currentLayer.id)
-              .map((l) => (
-                <span key={l.id}>
-                  ↔{l.name} {Math.round(overlayOpacity(currentLayer, l) * 100)}%
-                </span>
-              ))}
-          </div>
-        )}
         <div className="flex flex-col gap-2 px-3 pb-4">
           {layers.map((layer) => (
             <LayerRow
               key={layer.id}
               layer={layer}
-              otherLayers={layers.filter((l) => l.id !== layer.id)}
               count={scenes.filter((s) => s.layerId === layer.id).length}
               active={layer.id === currentLayerId}
             />
@@ -487,166 +385,5 @@ export function LeftPanel() {
         </div>
       </section>
     </aside>
-  )
-}
-
-function BuildingGroupCard({ building }: { building: BuildingGroup }) {
-  const fileRef = useRef<HTMLInputElement | null>(null)
-  const [portalInput, setPortalInput] = useState<{ from: string; to: string; def: string } | null>(null)
-  const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null)
-
-  const handleAddFloor = () => {
-    playSfx('click')
-    const nextOrdinal = (building.floors.at(-1)?.ordinal ?? 0) + 1
-    const nextHeight = (building.floors.at(-1)?.height ?? 0) + 2
-    addBuildingFloor(building.id, {
-      ordinal: nextOrdinal,
-      height: nextHeight,
-      nodes: [],
-      frame: { ...building.frame },
-      image: undefined,
-    })
-    toast(`建筑 ${building.id} 新增楼层 F${nextOrdinal}`, 'ok')
-  }
-
-  const handleSelectFloor = (floor: BuildingFloor) => {
-    playSfx('select')
-    setSelectedFloorId(floor.id)
-    selectOne('building', building.id)
-  }
-
-  const handlePickImage = (floorId: string) => () => {
-    playSfx('click')
-    fileRef.current?.click()
-    // Bind current floor id by closure through dataset
-    fileRef.current?.setAttribute('data-target-floor', floorId)
-  }
-
-  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    const targetFloorId = event.currentTarget.getAttribute('data-target-floor')
-    if (!file || !targetFloorId) return
-    const uploaded = await uploadMapImage(file)
-    setBuildingFloorImage(building.id, targetFloorId, uploaded.dataUrl)
-    toast(`已设置楼层图幅：${file.name}`, 'ok')
-    event.currentTarget.value = ''
-  }
-
-  const handleBindPortal = (floorId: string) => () => {
-    playSfx('click')
-    if (portalInput && portalInput.from && portalInput.to) {
-      bindBuildingPortal(building.id, {
-        from: portalInput.from,
-        to: portalInput.to,
-        def: portalInput.def || 'portal:default',
-      })
-      setPortalInput(null)
-    } else {
-      setPortalInput({ from: floorId, to: '', def: 'portal:default' })
-    }
-  }
-
-  return (
-    <div
-      data-ctx="building-group"
-      data-building-id={building.id}
-      className="rounded border border-border px-2 py-2"
-    >
-      <div className="flex items-center justify-between text-[11px] font-medium">
-        <button
-          onClick={() => {
-            playSfx('select')
-            selectOne('building', building.id)
-          }}
-          className="text-left"
-        >
-          {building.id}
-        </button>
-        <span className="font-mono text-muted-foreground">{building.floors.length} 层</span>
-      </div>
-      <div className="mt-1 flex flex-col gap-1 pl-2 text-[10px] text-muted-foreground">
-        <span>外壳 · {building.shell}</span>
-        {building.floors.map((floor) => (
-          <div
-            key={floor.id}
-            data-ctx="building-floor"
-            data-floor-id={floor.id}
-            className={`flex flex-col gap-1 rounded px-1 py-1 ${selectedFloorId === floor.id ? 'bg-primary/10' : ''}`}
-          >
-            <button
-              onClick={() => handleSelectFloor(floor)}
-              className="flex justify-between text-left"
-            >
-              <span>↳ {floor.ordinal}F · h={floor.height}</span>
-              {floor.image ? <span className="text-success">已绑定</span> : <span>无图幅</span>}
-            </button>
-            {selectedFloorId === floor.id ? (
-              <div className="flex flex-wrap gap-1">
-                <button
-                  onClick={handlePickImage(floor.id)}
-                  className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-primary"
-                >
-                  设图幅
-                </button>
-                <button
-                  onClick={() => {
-                    playSfx('warning')
-                    setBuildingFloorOrdinal(building.id, floor.id, Math.max(1, floor.ordinal - 1))
-                  }}
-                  className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-primary"
-                >
-                  上移层
-                </button>
-                <button
-                  onClick={handleBindPortal(floor.id)}
-                  className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-primary"
-                >
-                  绑入口
-                </button>
-                <button
-                  onClick={() => {
-                    playSfx('error')
-                    removeBuildingFloor(building.id, floor.id)
-                    setSelectedFloorId(null)
-                  }}
-                  className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-danger"
-                >
-                  移除
-                </button>
-                {portalInput?.from === floor.id ? (
-                  <input
-                    autoFocus
-                    placeholder="to (floor id)"
-                    value={portalInput.to}
-                    onChange={(e) => setPortalInput({ ...portalInput, to: e.target.value })}
-                    onBlur={() => portalInput.to && handleBindPortal(floor.id)()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && portalInput.to) handleBindPortal(floor.id)()
-                    }}
-                    className="rounded bg-panel px-1.5 py-0.5 text-[9px] text-foreground"
-                  />
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={handleAddFloor}
-        data-ctx="add-building-floor"
-        data-building-id={building.id}
-        className="mt-2 flex w-full items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-primary"
-      >
-        <IconPlus width={12} height={12} />
-        新增楼层
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/png"
-        onChange={handleFile}
-        className="hidden"
-      />
-    </div>
   )
 }

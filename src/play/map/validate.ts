@@ -25,8 +25,6 @@ import {
   type MapNode,
   type SceneScale,
   type Vec2,
-  type BuildingGroup,
-  type BuildingFrame,
 } from './types';
 import { distance } from './curve';
 
@@ -48,39 +46,6 @@ export interface MapDiagnostic {
 
 /** 端点吸附容差（归一化坐标）。超出即视为没吸附上。 */
 export const SNAP_TOLERANCE = 0.005;
-
-function validateBuildingGroups(groups: readonly BuildingGroup[] | undefined): MapDiagnostic[] {
-  if (groups === undefined) return [];
-  const findings: MapDiagnostic[] = [];
-  const ids = new Set<string>();
-  const frameValid = (frame: BuildingFrame) =>
-    Number.isFinite(frame.x) && Number.isFinite(frame.y) &&
-    Number.isFinite(frame.width) && Number.isFinite(frame.height) &&
-    frame.x >= 0 && frame.y >= 0 && frame.width > 0 && frame.height > 0 &&
-    frame.x + frame.width <= 1 && frame.y + frame.height <= 1;
-  groups.forEach((group, index) => {
-    const path = `/buildingGroups/${index}`;
-    if (!group.id) findings.push({ code: 'MAP_BUILDING_EMPTY_ID', severity: 'error', path: `${path}/id`, message: '建筑组 id 不能为空。', correction: '为建筑组填写稳定且唯一的 id。' });
-    else if (ids.has(group.id)) findings.push({ code: 'MAP_BUILDING_DUPLICATE_ID', severity: 'error', path: `${path}/id`, subject: group.id, message: `建筑组 id「${group.id}」重复。`, correction: '为每个建筑组使用不同的 id。' });
-    ids.add(group.id);
-    if (!frameValid(group.frame)) findings.push({ code: 'MAP_BUILDING_FRAME_INVALID', severity: 'error', path: `${path}/frame`, subject: group.id, message: '建筑组 frame 必须是归一化坐标内的正矩形。', correction: '检查 x、y、width、height 并确保矩形完全落在 0 到 1 范围内。' });
-    const floorIds = new Set<string>();
-    group.floors.forEach((floor, floorIndex) => {
-      const floorPath = `${path}/floors/${floorIndex}`;
-      if (!floor.id || floorIds.has(floor.id)) findings.push({ code: 'MAP_BUILDING_FLOOR_ID_INVALID', severity: 'error', path: `${floorPath}/id`, subject: group.id, message: '同一建筑组内楼层 id 必须非空且唯一。', correction: '为每个楼层填写不同的 id。' });
-      floorIds.add(floor.id);
-      if (!Number.isFinite(floor.ordinal) || !Number.isFinite(floor.height)) findings.push({ code: 'MAP_BUILDING_FLOOR_HEIGHT_INVALID', severity: 'error', path: floorPath, subject: floor.id, message: '建筑楼层 ordinal 与 height 必须是有限数字。', correction: '填写有效的楼层序号和局部高度。' });
-      if (floor.frame !== undefined && !frameValid(floor.frame)) findings.push({ code: 'MAP_BUILDING_FLOOR_FRAME_INVALID', severity: 'error', path: `${floorPath}/frame`, subject: floor.id, message: '楼层局部 frame 必须是归一化坐标内的正矩形。', correction: '检查楼层 frame 边界。' });
-    });
-    const portalIds = new Set<string>();
-    group.portals.forEach((portal, portalIndex) => {
-      if (!portal.id || portalIds.has(portal.id)) findings.push({ code: 'MAP_BUILDING_PORTAL_ID_INVALID', severity: 'error', path: `${path}/portals/${portalIndex}/id`, subject: group.id, message: '建筑门户 id 必须非空且唯一。', correction: '为每个门户填写不同的 id。' });
-      portalIds.add(portal.id);
-      if (!portal.from || !portal.to) findings.push({ code: 'MAP_BUILDING_PORTAL_ENDPOINT_INVALID', severity: 'error', path: `${path}/portals/${portalIndex}`, subject: portal.id, message: '建筑门户必须有 from 和 to 端点。', correction: '绑定有效的主地图层或同建筑楼层端点。' });
-    });
-  });
-  return findings;
-}
 
 function inRange(value: number): boolean {
   return Number.isFinite(value) && value >= COORD_MIN && value <= COORD_MAX;
@@ -112,7 +77,6 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
     findings.push(...validateLegacyFloorDeclaration(map, floors));
   } else {
     findings.push(...validateLayerContract(map));
-    findings.push(...validateBuildingGroups((map as { readonly buildingGroups?: readonly BuildingGroup[] }).buildingGroups));
   }
 
   const scale = map.mapScale?.standardCharacterWidth;
@@ -618,8 +582,6 @@ function hasCanonicalLayerFields(map: MapDataDocument): boolean {
  * 只对 canonical 形状（`layers` / `node.layerId`）生效。校验项：
  * - layer id 必填且唯一；
  * - node.layerId 必须命中 `layers` 中的唯一图层；
- * - 参与透视（填了 height）的 height 必须有限、非负；
- * - 参与透视的 height 不能重复（同图内）；
  * - legacy `floor` / `floors` 字段不可与 canonical 并存（冲突拒绝）。
  * legacy floor 形态（schemaVersion '1.0'）不由此校验处理——它在导入边界就被规范化。
  */
@@ -642,7 +604,7 @@ export function validateLayerContract(map: MapDataDocument): readonly MapDiagnos
   if (!canonicalShape) return findings;
 
   const canonical = map as unknown as {
-    layers?: readonly { id?: string; height?: number; backdrop?: MapLayer['backdrop'] }[];
+    layers?: readonly { id?: string; backdrop?: MapLayer['backdrop'] }[];
     nodes: readonly { id: string; layerId?: string }[];
   };
   const layers = canonical.layers;
@@ -698,52 +660,6 @@ export function validateLayerContract(map: MapDataDocument): readonly MapDiagnos
     if (!layer.backdrop.image || !Number.isFinite(layer.backdrop.pixelWidth) || !Number.isFinite(layer.backdrop.pixelHeight) || layer.backdrop.pixelWidth <= 0 || layer.backdrop.pixelHeight <= 0) {
       findings.push({ code: 'MAP_INVALID_IMAGE_RESOURCE', severity: 'error', path, subject: layer.id, message: `图层「${layer.id}」的图片资源或固有尺寸无效。`, correction: '提供非空资源地址，以及大于 0 的固有宽高；SVG 应从 viewBox 或 width/height 取得尺寸。' });
     }
-  });
-
-  // 参与透视 height：有限且非负。
-  layers.forEach((layer, index) => {
-    if (layer.height === undefined) return; // 独立层
-    const path = `/layers/${index}/height`;
-    if (typeof layer.height !== 'number' || Number.isNaN(layer.height) || !Number.isFinite(layer.height)) {
-      findings.push({
-        code: 'MAP_INVALID_LAYER_HEIGHT',
-        severity: 'error',
-        path,
-        subject: layer.id,
-        message: `图层「${layer.id}」的参与透视高度不是有限数值。`,
-        correction: '参与透视的图层高度必须是一个有限的数字（如地面 0、高架 1）。留空则视为独立层。',
-      });
-      return;
-    }
-    if (layer.height < 0) {
-      findings.push({
-        code: 'MAP_INVALID_LAYER_HEIGHT',
-        severity: 'error',
-        path,
-        subject: layer.id,
-        message: `图层「${layer.id}」的参与透视高度是负数（${layer.height}）。`,
-        correction: '参与透视的高度不能为负。地面层通常取 0，往上逐层递增。',
-      });
-    }
-  });
-
-  // 参与透视 height 唯一。
-  const seenHeights = new Set<number>();
-  layers.forEach((layer, index) => {
-    if (layer.height === undefined) return; // 独立层，可重复
-    if (!Number.isFinite(layer.height)) return; // 已另报
-    if (seenHeights.has(layer.height)) {
-      const first = layers.findIndex((candidate) => candidate.height === layer.height);
-      findings.push({
-        code: 'MAP_DUPLICATE_LAYER_HEIGHT',
-        severity: 'error',
-        path: `/layers/${index}/height`,
-        subject: layer.id,
-        message: `图层「${layer.id}」的参与透视高度 ${layer.height} 与 /layers/${first} 上的图层重复。`,
-        correction: '参与透视的图层高度在整个地图内必须唯一。改成一个不同高度，或把它留空变成独立层。',
-      });
-    }
-    seenHeights.add(layer.height);
   });
 
   // node.layerId 必须命中唯一图层。

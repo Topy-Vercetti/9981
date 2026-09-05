@@ -12,15 +12,12 @@ import {
   type CanonicalMapData,
   type MapDataDocument,
   type MapLayer,
-  type BuildingGroup,
 } from './types';
 
-/** 层的显示元数据序列化：只写出有值的字段（height 空 = 独立层，不输出）。
- *  字段顺序固定，保证 pretty JSON 稳定。 */
+/** 层的显示元数据序列化，字段顺序固定以保证 pretty JSON 稳定。 */
 function serializeLayer(layer: MapLayer): Record<string, unknown> {
   const record: Record<string, unknown> = { id: layer.id };
   if (layer.name !== undefined) record['name'] = layer.name;
-  if (layer.height !== undefined) record['height'] = layer.height;
   if (layer.backdrop !== undefined) {
     record['backdrop'] = {
       image: layer.backdrop.image,
@@ -38,23 +35,6 @@ function serializeLayer(layer: MapLayer): Record<string, unknown> {
     };
   }
   return record;
-}
-
-function serializeBuildingGroup(group: BuildingGroup): Record<string, unknown> {
-  return {
-    id: group.id,
-    frame: { ...group.frame },
-    shell: group.shell,
-    floors: group.floors.map((floor) => ({
-      id: floor.id,
-      ordinal: floor.ordinal,
-      height: floor.height,
-      nodes: [...floor.nodes],
-      ...(floor.image !== undefined ? { image: floor.image } : {}),
-      ...(floor.frame !== undefined ? { frame: { ...floor.frame } } : {}),
-    })),
-    portals: group.portals.map((portal) => ({ ...portal })),
-  };
 }
 
 function serializeNode(node: CanonicalMapData['nodes'][number]): Record<string, unknown> {
@@ -114,9 +94,6 @@ export function serializeMapData(map: CanonicalMapData): string {
     nodes: map.nodes.map(serializeNode),
     edges: map.edges.map(serializeEdge),
     placements: map.placements.map(serializePlacement),
-    ...(map.buildingGroups !== undefined
-      ? { buildingGroups: map.buildingGroups.map(serializeBuildingGroup) }
-      : {}),
   };
   return JSON.stringify(document, null, 2);
 }
@@ -155,11 +132,3 @@ export function parseMapData(json: string): CanonicalMapData {
   return normalizeMapDocument(legacy);
 }
 
-/**
- * 层间渲染不透明度纯函数（L.3）。任一侧无数值 `height` 时返回 `null`（独立层，调用方渲染为
- * opacity 1）；两侧都有时返回 `clamp(1 - |Δheight| × 0.1, 0, 1)`。
- */
-export function layerOpacity(a: number | undefined, b: number | undefined): number | null {
-  if (a === undefined || b === undefined) return null;
-  return Math.max(0, Math.min(1, 1 - Math.abs(a - b) * 0.1));
-}

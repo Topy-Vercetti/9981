@@ -50,7 +50,7 @@ function publishLayerOf(node: NodeLayerRef, ordered: readonly MapLayer[]): strin
 /**
  * 把 devboard 编辑态规范化为 canonical 形状。
  *
- * devboard 的 layer 列表是权威图层（name/height/backdrop/transform）。这里把列出的图层直接作为
+ * devboard 的 layer 列表是权威图层（name/backdrop/transform）。这里把列出的图层直接作为
  * canonical `layers`，节点根据 floor 就近归类到所列图层（带显式 layerId 的节点用其引用），产出
  * canonical v2 文档——不经过 legacy floor 派生层，故不会出现 deriveLayerId 的 `layer:floor:N` 层。
  */
@@ -80,7 +80,6 @@ function canonicalizeForPublish(bundle: ExportBundle): ReturnType<typeof normali
 function serializeLayer(layer: MapLayer): Record<string, unknown> {
   const record: Record<string, unknown> = { id: layer.id };
   if (layer.name !== undefined) record['name'] = layer.name;
-  if (layer.height !== undefined) record['height'] = layer.height;
   if (layer.backdrop !== undefined) {
     record['backdrop'] = {
       image: layer.backdrop.image,
