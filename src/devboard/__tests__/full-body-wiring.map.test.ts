@@ -7,7 +7,7 @@ describe('MapDocAdapter', () => {
     const doc: MapDoc = {
       id: 'map:test',
       name: '接线测试地图',
-      layers: [{ id: 'layer:0', name: '地面', height: 0 }],
+      layers: [{ id: 'layer:0', name: '地面' }],
       sceneNodes: [
         { id: 'node:a', name: '入口', scale: 'large', layerId: 'layer:0', at: { x: 320, y: 420 }, def: 'd:scene/large' },
         { id: 'node:b', name: '终点', scale: 'small', layerId: 'layer:0', at: { x: 1000, y: 420 }, def: 'd:scene/small' },

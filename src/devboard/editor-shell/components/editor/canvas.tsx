@@ -80,6 +80,7 @@ import {
   sceneIdAtPoint,
   worldPerPixel,
 } from '@editor/lib/canvas-coords'
+import { exceedsDragThreshold, shouldStartMarquee } from '@editor/lib/pointer-intent'
 
 /* ------------------------------------------------------------------ */
 /*  Toolbar                                                            */
@@ -172,7 +173,7 @@ function Legend() {
 /* ------------------------------------------------------------------ */
 
 type Drag =
-  | { kind: 'pan'; last: Vec }
+  | { kind: 'pan'; start: Vec; last: Vec; moved: boolean; pendingConfirmation: boolean }
   | { kind: 'place'; start: Vec }
   | { kind: 'marquee'; start: Vec }
   | { kind: 'move'; last: Vec; moved: boolean }
@@ -293,7 +294,12 @@ function SceneLabel({
   opacity: number
 }) {
   return (
-    <g opacity={opacity} style={{ pointerEvents: 'none' }}>
+    <g
+      opacity={opacity}
+      style={{ pointerEvents: 'none' }}
+      role="img"
+      aria-label={`场景 ${node.name}，${SCALE_LABEL[node.scale]}尺度`}
+    >
       <rect
         x={bbox.x + 8}
         y={bbox.y + 8}
@@ -447,6 +453,14 @@ function PortalEndpoint({
         flyTo({ x: target.at.x - 500, y: target.at.y - 380, w: 1000, h: 760 })
         playSfx('toggle')
       }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        selectOne('edge', edge.id)
+        setCurrentLayer(target.layerId)
+        flyTo({ x: target.at.x - 500, y: target.at.y - 380, w: 1000, h: 760 })
+        playSfx('toggle')
+      }}
     >
       <rect
         x={-10}
@@ -460,7 +474,7 @@ function PortalEndpoint({
         vectorEffect="non-scaling-stroke"
       />
       <text x={0} y={4} textAnchor="middle" fill="var(--transition)" fontSize={12} fontWeight={800}>
-        ↗
+        {edge.directionality === 'bidirectional' ? '↔' : source.id === edge.from ? '→' : '←'}
       </text>
       <title>{`前往 ${targetLayerName} · ${target.name}`}</title>
     </g>
@@ -798,13 +812,14 @@ export function Canvas() {
       svgRef.current?.setPointerCapture(ev.pointerId)
       const target = ev.target as Element
       if (target.closest('[data-backdrop-layer]')) return
-      if (getState().pendingLayerId && target.closest('[data-canvas-background]')) {
-        confirmPendingLayer()
-      }
+      const pendingConfirmation = Boolean(
+        getState().pendingLayerId && target.closest('[data-canvas-background]'),
+      )
 
       // pan: space or middle button
       if (spaceRef.current || ev.button === 1) {
-        dragRef.current = { kind: 'pan', last: { x: ev.clientX, y: ev.clientY } }
+        const point = { x: ev.clientX, y: ev.clientY }
+        dragRef.current = { kind: 'pan', start: point, last: point, moved: false, pendingConfirmation: false }
         return
       }
 
@@ -911,13 +926,14 @@ export function Canvas() {
       }
 
       // 空白默认平移；只有 Ctrl（macOS 兼容 Meta）+拖拽才框选。
-      if (ev.ctrlKey || ev.metaKey) {
+      if (shouldStartMarquee(ev)) {
         if (!ev.shiftKey) clearSelection()
         dragRef.current = { kind: 'marquee', start: w }
         setPreview({ marquee: { x: w.x, y: w.y, width: 0, height: 0 } })
       } else {
         if (!ev.shiftKey) clearSelection()
-        dragRef.current = { kind: 'pan', last: { x: ev.clientX, y: ev.clientY } }
+        const point = { x: ev.clientX, y: ev.clientY }
+        dragRef.current = { kind: 'pan', start: point, last: point, moved: false, pendingConfirmation }
       }
     },
     [mode, toW, hitTest, waypointHit, singleEdgeSel, selection, selIds],
@@ -932,15 +948,21 @@ export function Canvas() {
 
       switch (drag.kind) {
         case 'pan': {
-          const prev = screenToWorld(drag.last.x, drag.last.y)!
-          const cur = screenToWorld(ev.clientX, ev.clientY)!
-          const cam = getState().camera
-          setCamera({
-            ...cam,
-            x: cam.x - (cur.x - prev.x),
-            y: cam.y - (cur.y - prev.y),
-          })
-          drag.last = { x: ev.clientX, y: ev.clientY }
+          const nextPoint = { x: ev.clientX, y: ev.clientY }
+          if (!drag.moved && exceedsDragThreshold(drag.start, nextPoint)) {
+            drag.moved = true
+          }
+          if (drag.moved) {
+            const prev = screenToWorld(drag.last.x, drag.last.y)!
+            const cur = screenToWorld(nextPoint.x, nextPoint.y)!
+            const cam = getState().camera
+            setCamera({
+              ...cam,
+              x: cam.x - (cur.x - prev.x),
+              y: cam.y - (cur.y - prev.y),
+            })
+          }
+          drag.last = nextPoint
           break
         }
         case 'place':
@@ -1013,6 +1035,10 @@ export function Canvas() {
       const w = toW(ev)
 
       switch (drag.kind) {
+        case 'pan': {
+          if (drag.pendingConfirmation && !drag.moved) confirmPendingLayer()
+          break
+        }
         case 'place': {
           const rect = rectFromDrag(drag.start, w)
           if (rect.width > 20 && rect.height > 20) {
@@ -1034,20 +1060,33 @@ export function Canvas() {
           const rect = rectFromDrag(drag.start, w)
           if (rect.width > 5 || rect.height > 5) {
             const next: { type: 'scene' | 'obstruction' | 'terrain' | 'placement'; id: string }[] = []
-            for (const node of getState().doc.sceneNodes) {
-              const boxes = boxesOfScene(node.id, getState().doc)
+            const current = getState()
+            const currentSceneIds = new Set(
+              current.doc.sceneNodes
+                .filter((node) => node.layerId === current.currentLayerId)
+                .map((node) => node.id),
+            )
+            for (const node of current.doc.sceneNodes) {
+              if (!currentSceneIds.has(node.id)) continue
+              const boxes = boxesOfScene(node.id, current.doc)
               if (boxes.some((box) => rectsOverlap(rect, rotatedRectAABB(box, box.rotation ?? 0)))) {
                 next.push({ type: 'scene', id: node.id })
               }
             }
-            for (const item of getState().doc.obstructions) {
-              if (rectsOverlap(rect, rotatedRectAABB(item, item.rotation))) next.push({ type: 'obstruction', id: item.id })
+            for (const item of current.doc.obstructions) {
+              if (item.layerId === current.currentLayerId && rectsOverlap(rect, rotatedRectAABB(item, item.rotation))) {
+                next.push({ type: 'obstruction', id: item.id })
+              }
             }
-            for (const item of getState().doc.terrains) {
-              if (rectsOverlap(rect, rotatedRectAABB(item, item.rotation))) next.push({ type: 'terrain', id: item.id })
+            for (const item of current.doc.terrains) {
+              if (item.layerId === current.currentLayerId && rectsOverlap(rect, rotatedRectAABB(item, item.rotation))) {
+                next.push({ type: 'terrain', id: item.id })
+              }
             }
-            for (const item of getState().doc.placements) {
-              if (pointInRect({ x: item.x, y: item.y }, rect, 18)) next.push({ type: 'placement', id: item.id })
+            for (const item of current.doc.placements) {
+              if (currentSceneIds.has(item.sceneId) && pointInRect({ x: item.x, y: item.y }, rect, 18)) {
+                next.push({ type: 'placement', id: item.id })
+              }
             }
             if (ev.shiftKey) setSelection([...selection, ...next])
             else setSelection(next)
@@ -1194,7 +1233,7 @@ export function Canvas() {
         }
         return
       }
-      // B2：绕组外接矩形中心整体旋转 10°/格——旋转所有成员框的几何，非仅
+      // B2：绕组外接矩形中心整体旋转 10°/格—���旋转所有成员框的几何，非仅
       // 当前框；多选场景时逐个各自绕自己的组中心转，互不影响。
       if (sel.length > 0 && sel.every((s) => s.type === 'scene')) {
         const step = ev.deltaY > 0 ? 10 : -10

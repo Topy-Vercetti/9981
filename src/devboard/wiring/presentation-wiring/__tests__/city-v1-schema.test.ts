@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
-import type { CanonicalMapData } from '../../../play/map/types'
+import type { CanonicalMapData } from '../../../../play/map/types'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -52,7 +52,7 @@ describe('city-v1.json schema compliance', () => {
   it('all edges are bidirectional and traversable', () => {
     for (const edge of city.edges) {
       expect(edge.directionality).toBe('bidirectional')
-      expect(edge.traversable).toBe(true)
+      expect((edge as typeof edge & { traversable?: boolean }).traversable).toBe(true)
     }
   })
 

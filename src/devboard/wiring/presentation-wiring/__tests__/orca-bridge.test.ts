@@ -5,15 +5,15 @@
  */
 import { describe, it, expect } from 'vitest'
 import { createOrcaBridge, type OrcaBridgeResult } from '../orca-bridge'
-import type { CanonicalMapData } from '../../../play/map/types'
-import type { GameplayEvent } from '../../../ui/presentation/spatial/choreography/event-bridge'
+import type { MapData } from '../../../../play/map/types'
+import type { EntityPlacePayload, GameplayEvent } from '../../../../ui/presentation/spatial/choreography/event-bridge'
 
-const cityV1Map: CanonicalMapData = {
+const cityV1Map: MapData = {
   schemaVersion: '2.0',
   id: 'city_v1',
   name: 'test',
   backdrop: { image: '', pixelWidth: 1920, pixelHeight: 1080, tileRows: 1, tileCols: 1 },
-  layers: [{ id: 'layer:ground', name: 'ground', height: 0 }],
+  layers: [{ id: 'layer:ground', name: 'ground' }],
   nodes: [
     { id: 'A', def: 'd:x', scale: 'medium', at: { x: 0.20, y: 0.20 }, layerId: 'layer:ground' },
     { id: 'B', def: 'd:x', scale: 'medium', at: { x: 0.50, y: 0.50 }, layerId: 'layer:ground' },
@@ -21,9 +21,9 @@ const cityV1Map: CanonicalMapData = {
   ],
   edges: [],
   placements: [],
-} as unknown as CanonicalMapData
+} as unknown as MapData
 
-function makeEvent(type: 'after:entity.place', payload: GameplayEvent['payload']): GameplayEvent {
+function makeEvent(type: 'after:entity.place', payload: EntityPlacePayload): GameplayEvent {
   return { type, payload, revision: 1 }
 }
 

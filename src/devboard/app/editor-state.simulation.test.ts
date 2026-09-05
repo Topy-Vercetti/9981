@@ -319,15 +319,15 @@ describe('开发板模拟操作：样例地图与导出自洽', () => {
 
   it('序列化导出 canonical layers/layerId，不再携带 legacy floors/floor，且可再编译', () => {
     const map = sampleMap();
-    const json = serializeMapPublish({ map, layers: [{ id: 'layer:ground', name: '地面层', height: 0 }, { id: 'layer:roof', name: '高架层', height: 1 }] });
+    const json = serializeMapPublish({ map, layers: [{ id: 'layer:ground', name: '地面层' }, { id: 'layer:roof', name: '高架层' }] });
     const parsed = JSON.parse(json) as any;
     // canonical 输出：不再丢 layers，且不再写 legacy floors/floor。
     expect(parsed.schemaVersion).toBe('2.0');
     expect(json).not.toContain('"floors"');
     expect(json).not.toContain('"floor"');
-    // 层列表保序、高度迁移；节点层引用归属到所列图层（layerId 集合 ⊂ layers id 集合）。
+    // 层列表保序且不再输出废弃高度；节点层引用归属到所列图层。
     expect(parsed.layers.map((l: any) => l.id)).toEqual(['layer:ground', 'layer:roof']);
-    expect(parsed.layers.map((l: any) => l.height)).toEqual([0, 1]);
+    expect(json).not.toContain('"height"');
     const layerIds = new Set(parsed.layers.map((l: any) => l.id));
     expect(parsed.nodes.length).toBeGreaterThan(0);
     expect(parsed.nodes.every((n: any) => typeof n.layerId === 'string' && layerIds.has(n.layerId))).toBe(true);

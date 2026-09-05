@@ -26,7 +26,7 @@ export interface SelectionTarget {
 
 export interface WorkspaceState {
   readonly map: MapData;
-  readonly layers: readonly MapLayer[]; // 以 height 排序；参与透视 height 去重（留空可有多个）
+  readonly layers: readonly MapLayer[];
   readonly currentLayerId: string | null; // 当前图层；null = 无图层
   readonly stickers: readonly StickerEdit[];
   readonly selection: SelectionTarget | null;
@@ -35,7 +35,7 @@ export interface WorkspaceState {
 
 /** 新建一个空图层（空画布，L.1）。 */
 export function emptyLayer(id: string, name?: string): MapLayer {
-  return { id, ...(name ? { name } : {}), height: undefined };
+  return { id, ...(name ? { name } : {}) };
 }
 
 /**

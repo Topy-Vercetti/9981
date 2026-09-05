@@ -164,19 +164,17 @@ function LayerRow({ layer, count, active }: { layer: Layer; count: number; activ
       >
         {active ? <IconEye width={16} height={16} /> : <IconEyeOff width={16} height={16} />}
       </button>
-      {layer.backdrop && (
-        <button
-          onClick={() => {
-            playSfx('click')
-            removeLayer(layer.id)
-          }}
-          className="text-muted-foreground transition-colors hover:text-error"
-          aria-label={`删除图层 ${layer.name}`}
-          title="删除整个地图图层"
-        >
-          <IconTrash width={15} height={15} />
-        </button>
-      )}
+      <button
+        onClick={() => {
+          playSfx('click')
+          removeLayer(layer.id)
+        }}
+        className="text-muted-foreground transition-colors hover:text-error"
+        aria-label={`删除图层 ${layer.name}`}
+        title="删除整个图层及其内容"
+      >
+        <IconTrash width={15} height={15} />
+      </button>
     </div>
   )
 }

@@ -130,8 +130,8 @@ describe('spatial-view', () => {
 
       expect(result.id).toBe('floor:2');
       expect(result.name).toBe('楼层 2');
-      expect(result.height).toBe(2);
-      expect(result.opacity).toBe(1);
+      expect(result).not.toHaveProperty('height');
+      expect(result).not.toHaveProperty('opacity');
     });
   });
 

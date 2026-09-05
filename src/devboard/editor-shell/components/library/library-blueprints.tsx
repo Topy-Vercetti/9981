@@ -129,7 +129,7 @@ function BlueprintDialog({ bp, onClose }: { bp: BlueprintMeta; onClose: () => vo
     return editorDocToCanonical({
       id: `blueprint_${base.mapId}`,
       name: base.name,
-      layers: [{ id: 'ly_ground', name: '地面层', height: 0 }],
+      layers: [{ id: 'ly_ground', name: '地面层' }],
       sceneNodes: scenes,
       sceneBoxes: scenes.map((s, i) => ({
         id: `bx_${i}`,

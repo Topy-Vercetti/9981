@@ -100,7 +100,7 @@ interface State {
   /** 新导入图片唯一一次的缩放态；点击画布空白后清空且不可恢复。 */
   pendingLayerId: string | null
   /** 跨层接力连线只属于编辑视图，不进入地图 JSON 或撤销历史。 */
-  crossLayerEdgeDraft: { fromSceneId: string; fromLayerId: string } | null
+  crossLayerEdgeDraft: { fromSceneId: string; fromLayerId: string; targetLayerId: string } | null
   sampleSlot: SampleSlot | null
   diagnostics: Diagnostic[]
   pulse: { id: string; n: number; level?: 'error' | 'warning' } | null
@@ -384,7 +384,7 @@ export function beginCrossLayerEdge(fromSceneId: string, targetLayerId: string) 
   if (!source || source.layerId === targetLayerId) return false
   if (!state.doc.layers.some((layer) => layer.id === targetLayerId)) return false
   setState({
-    crossLayerEdgeDraft: { fromSceneId, fromLayerId: source.layerId },
+    crossLayerEdgeDraft: { fromSceneId, fromLayerId: source.layerId, targetLayerId },
     currentLayerId: targetLayerId,
     selection: [],
   })
@@ -396,7 +396,7 @@ export function cancelCrossLayerEdge() {
 export function completeCrossLayerEdge(toSceneId: string): string | null {
   const draft = state.crossLayerEdgeDraft
   const target = state.doc.sceneNodes.find((node) => node.id === toSceneId)
-  if (!draft || !target || target.id === draft.fromSceneId || target.layerId === draft.fromLayerId) return null
+  if (!draft || !target || target.id === draft.fromSceneId || target.layerId !== draft.targetLayerId) return null
   const id = addEdge(draft.fromSceneId, target.id, [
     nodeAnchor(draft.fromSceneId, state.doc),
     nodeAnchor(target.id, state.doc),
@@ -452,7 +452,14 @@ export function setCurrentLayer(layerId: string) {
       }
       if (item.type === 'obstruction') return state.doc.obstructions.some((candidate) => candidate.id === item.id && candidate.layerId === layerId)
       if (item.type === 'terrain') return state.doc.terrains.some((candidate) => candidate.id === item.id && candidate.layerId === layerId)
-      return item.type === 'edge'
+      if (item.type === 'edge') {
+        const edge = state.doc.edges.find((candidate) => candidate.id === item.id)
+        if (!edge) return false
+        const fromLayerId = state.doc.sceneNodes.find((node) => node.id === edge.from)?.layerId
+        const toLayerId = state.doc.sceneNodes.find((node) => node.id === edge.to)?.layerId
+        return fromLayerId !== toLayerId && (fromLayerId === layerId || toLayerId === layerId)
+      }
+      return false
     }),
   })
 }
@@ -462,7 +469,7 @@ export function setCurrentLayerByIndex(index: number) {
   const clamped = Math.max(0, Math.min(index, layers.length - 1))
   const layer = layers[clamped]
   if (!layer) return
-  setState({ currentLayerId: layer.id })
+  setCurrentLayer(layer.id)
 }
 export function togglePanel() {
   setState({ panelOpen: !state.panelOpen })
@@ -509,10 +516,18 @@ export function removeLayer(id: string) {
     currentLayerId: state.currentLayerId === id ? fallbackId : state.currentLayerId,
     pendingLayerId: state.pendingLayerId === id ? null : state.pendingLayerId,
     crossLayerEdgeDraft:
-      state.crossLayerEdgeDraft?.fromLayerId === id ? null : state.crossLayerEdgeDraft,
+      state.crossLayerEdgeDraft?.fromLayerId === id || state.crossLayerEdgeDraft?.targetLayerId === id
+        ? null
+        : state.crossLayerEdgeDraft,
     selection: state.selection.filter((item) => {
-      if (item.type === 'scene' || item.type === 'placement') return !removedSceneIds.has(item.id)
+      if (item.type === 'scene') return !removedSceneIds.has(item.id)
+      if (item.type === 'placement') {
+        const placement = state.doc.placements.find((candidate) => candidate.id === item.id)
+        return placement ? !removedSceneIds.has(placement.sceneId) : false
+      }
       if (item.type === 'edge') return !removedEdgeIds.has(item.id)
+      if (item.type === 'obstruction') return state.doc.obstructions.some((candidate) => candidate.id === item.id && candidate.layerId !== id)
+      if (item.type === 'terrain') return state.doc.terrains.some((candidate) => candidate.id === item.id && candidate.layerId !== id)
       return true
     }),
   })
@@ -1019,7 +1034,13 @@ export function deleteSelection() {
     ),
   }
   setDoc(next)
-  setState({ selection: [] })
+  setState({
+    selection: [],
+    crossLayerEdgeDraft:
+      state.crossLayerEdgeDraft && ids.has(state.crossLayerEdgeDraft.fromSceneId)
+        ? null
+        : state.crossLayerEdgeDraft,
+  })
 }
 
 export function duplicateSelection() {
@@ -1225,7 +1246,7 @@ export function scalePendingLayer(factor: number) {
   const next = {
     ...state.doc,
     layers: state.doc.layers.map((layer) => {
-      if (layer.id !== id || !layer.transform) return layer
+      if (layer.id !== id || !layer.transform || !layer.backdrop) return layer
       const scale = Math.min(100, Math.max(0.001, layer.transform.scaleX * factor))
       const centerX = layer.transform.tx + layer.backdrop.pixelWidth * layer.transform.scaleX / 2
       const centerY = layer.transform.ty + layer.backdrop.pixelHeight * layer.transform.scaleY / 2
@@ -1417,20 +1438,11 @@ export function buildMapData(doc: MapDoc): MapData {
     schemaVersion: '2.0',
     id: doc.id,
     name: doc.name,
-    layers: doc.layers.map((l) => ({ id: l.id, name: l.name, height: l.height, backdrop: l.backdrop, transform: l.transform })),
-    buildingGroups: doc.buildingGroups?.map((group) => ({
-      id: group.id,
-      frame: { x: nx(group.frame.x), y: ny(group.frame.y), width: nx(group.frame.width), height: ny(group.frame.height) },
-      shell: group.shell,
-      floors: group.floors.map((floor) => ({
-        id: floor.id,
-        ordinal: floor.ordinal,
-        height: floor.height,
-        nodes: [...floor.nodes],
-        ...(floor.image !== undefined ? { image: floor.image } : {}),
-        ...(floor.frame !== undefined ? { frame: { x: nx(floor.frame.x), y: ny(floor.frame.y), width: nx(floor.frame.width), height: ny(floor.frame.height) } } : {}),
-      })),
-      portals: group.portals.map((portal) => ({ ...portal })),
+    layers: doc.layers.map((layer) => ({
+      id: layer.id,
+      name: layer.name,
+      backdrop: layer.backdrop,
+      transform: layer.transform,
     })),
     nodes: doc.sceneNodes.map((n) => {
       const anchor = nodeAnchor(n.id, doc)
@@ -1460,6 +1472,7 @@ export function buildMapData(doc: MapDoc): MapData {
     })),
     obstructions: doc.obstructions.map((o) => ({
       id: o.id,
+      layerId: o.layerId,
       type: o.type,
       x: nx(o.x),
       y: ny(o.y),
@@ -1470,6 +1483,7 @@ export function buildMapData(doc: MapDoc): MapData {
     })),
     terrains: doc.terrains.map((t) => ({
       id: t.id,
+      layerId: t.layerId,
       type: t.type,
       x: nx(t.x),
       y: ny(t.y),
