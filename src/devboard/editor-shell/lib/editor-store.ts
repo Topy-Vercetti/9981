@@ -37,6 +37,8 @@ import {
   type Obstruction,
   type Terrain,
   type Placement,
+  type Decoration,
+  type PlayerSpawn,
   type Vec,
   type EdgePoint,
   type Scale,
@@ -46,6 +48,7 @@ import { rdp } from './geometry'
 import { canonicalToEditorDoc, editorDocToCanonical } from './map-bridge'
 import type { CanonicalMapData } from '../../ports/map-contracts'
 import { parseMapData } from '../../ports/map-contracts'
+import type { MaterialIdentity } from '../../../meta-state/types'
 
 export interface Camera {
   x: number
@@ -200,6 +203,9 @@ function seedDoc(): MapDoc {
     obstructions: [],
     terrains: [],
     placements: [],
+    decorations: [],
+    playerSpawns: [],
+    transitionBundles: {},
   }
 
   const edges: Edge[] = [
@@ -982,6 +988,119 @@ export function addPlacement(materialId: string, sceneId: string, at: Vec) {
   const pl: Placement = { id, materialId, sceneId, x: at.x, y: at.y }
   setDoc({ ...state.doc, placements: [...state.doc.placements, pl] })
   return id
+}
+
+export type MaterialDropTarget =
+  | { kind: 'scene'; sceneId: string; at: Vec }
+  | { kind: 'player-spawn'; spawnId: string }
+  | { kind: 'layer'; layerId: string; at: Vec }
+  | { kind: 'edge'; edgeId: string }
+
+export type MaterialDropResult =
+  | { ok: true; createdId: string }
+  | { ok: false; reason: string }
+
+/** 八类素材唯一的编辑器放置入口。每次成功只提交一次 setDoc，因此 undo 是原子的。 */
+export function dropMaterial(identity: MaterialIdentity, target: MaterialDropTarget): MaterialDropResult {
+  if (identity.category === 'ai-player') {
+    if (target.kind !== 'player-spawn') return { ok: false, reason: 'AI 玩家角色包只能绑定到出生点。' }
+    if (identity.aiPlayer === undefined) return { ok: false, reason: 'AI 玩家角色包缺少角色、控制器或默认配置。' }
+    const spawn = (state.doc.playerSpawns ?? []).find((candidate) => candidate.id === target.spawnId)
+    if (spawn === undefined) return { ok: false, reason: '目标出生点不存在。' }
+    setDoc({
+      ...state.doc,
+      playerSpawns: (state.doc.playerSpawns ?? []).map((candidate) =>
+        candidate.id === spawn.id ? { ...candidate, aiPlayerMaterialId: identity.id } : candidate),
+    })
+    return { ok: true, createdId: spawn.id }
+  }
+
+  if (identity.category === 'decoration') {
+    if (target.kind !== 'layer') return { ok: false, reason: '装饰只能放到地图图层。' }
+    const id = uid('dc')
+    const decoration: Decoration = {
+      id,
+      materialId: identity.id,
+      layerId: target.layerId,
+      x: target.at.x,
+      y: target.at.y,
+      scale: identity.decoration?.defaultScale ?? 1,
+      rotation: identity.decoration?.defaultRotation ?? 0,
+      zOrder: 0,
+      visible: true,
+    }
+    setDoc({ ...state.doc, decorations: [...(state.doc.decorations ?? []), decoration] })
+    return { ok: true, createdId: id }
+  }
+
+  if (identity.category === 'transition-scene') {
+    if (target.kind !== 'edge') return { ok: false, reason: '过渡场景只能拖到现有连线上。' }
+    if (identity.transitionScene === undefined) return { ok: false, reason: '过渡场景缺少节点和两侧门户定义。' }
+    const edge = state.doc.edges.find((candidate) => candidate.id === target.edgeId)
+    if (edge === undefined) return { ok: false, reason: '目标连接不存在。' }
+    const from = state.doc.sceneNodes.find((node) => node.id === edge.from)
+    const to = state.doc.sceneNodes.find((node) => node.id === edge.to)
+    if (from === undefined || to === undefined) return { ok: false, reason: '目标连接的端点不完整。' }
+    const fromAt = nodeAnchor(from.id, state.doc)
+    const toAt = nodeAnchor(to.id, state.doc)
+    const midpoint = { x: (fromAt.x + toAt.x) / 2, y: (fromAt.y + toAt.y) / 2 }
+    const nodeId = uid('sc')
+    const entranceEdgeId = uid('ed')
+    const exitEdgeId = uid('ed')
+    const node: SceneNode = {
+      id: nodeId,
+      name: identity.name,
+      scale: 'small',
+      layerId: from.layerId,
+      def: identity.transitionScene.nodeDef,
+      at: midpoint,
+    }
+    const box: SceneBox = { id: uid('bx'), sceneId: nodeId, x: midpoint.x - 45, y: midpoint.y - 28, width: 90, height: 56 }
+    const entrance: Edge = {
+      ...edge,
+      id: entranceEdgeId,
+      to: nodeId,
+      def: identity.transitionScene.entranceDef,
+      points: [fromAt, midpoint],
+    }
+    const exit: Edge = {
+      ...edge,
+      id: exitEdgeId,
+      from: nodeId,
+      def: identity.transitionScene.exitDef,
+      points: [midpoint, toAt],
+    }
+    setDoc({
+      ...state.doc,
+      sceneNodes: [...state.doc.sceneNodes, node],
+      sceneBoxes: [...state.doc.sceneBoxes, box],
+      edges: [...state.doc.edges.filter((candidate) => candidate.id !== edge.id), entrance, exit],
+      transitionBundles: {
+        ...(state.doc.transitionBundles ?? {}),
+        [nodeId]: { materialId: identity.id, replacedEdgeId: edge.id, entranceEdgeId, exitEdgeId },
+      },
+    })
+    return { ok: true, createdId: nodeId }
+  }
+
+  if (target.kind !== 'scene') return { ok: false, reason: '该素材只能放到场景节点中。' }
+  if (!state.doc.sceneNodes.some((node) => node.id === target.sceneId)) return { ok: false, reason: '目标场景不存在。' }
+  if (identity.category === 'container' && !identity.capabilities.some((capability) => capability === 'container' || capability === 'carrier')) {
+    return { ok: false, reason: '容器素材缺少承载或收纳能力。' }
+  }
+  return { ok: true, createdId: addPlacement(identity.id, target.sceneId, target.at) }
+}
+
+export function createPlayerSpawn(sceneId: string, at: Vec, seat?: string): MaterialDropResult {
+  const scene = state.doc.sceneNodes.find((node) => node.id === sceneId)
+  if (scene === undefined) return { ok: false, reason: '目标场景不存在。' }
+  if (seat !== undefined && (state.doc.playerSpawns ?? []).some((spawn) => spawn.seat === seat)) {
+    return { ok: false, reason: `席位「${seat}」已有出生点。` }
+  }
+  const id = uid('sp')
+  const spawn: PlayerSpawn = { id, sceneId, layerId: scene.layerId, x: at.x, y: at.y, ...(seat !== undefined ? { seat } : {}) }
+  setDoc({ ...state.doc, playerSpawns: [...(state.doc.playerSpawns ?? []), spawn] })
+  return { ok: true, createdId: id }
 }
 export function updatePlacement(
   id: string,

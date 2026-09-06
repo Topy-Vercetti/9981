@@ -144,6 +144,25 @@ def test_rejects_wrong_schema() -> None:
     assert any("schema" in e for e in errors)
 
 
+def test_mapdata_patch_writes_canonical_author_geometry() -> None:
+    m = _load_tool()
+    data = {
+        "schema": m.SCHEMA,
+        "source": {"image": "source.png"},
+        "regions": [{
+            "id": "room", "building_group": "building", "bbox": [20, 10, 40, 30],
+            "shell": {}, "floor": {"height": 0}, "normalized_frame": {"width": 40, "height": 30},
+            "entrance_anchors": [], "stair_anchors": [], "view": "top-down-plan",
+        }],
+    }
+    patch = m.mapdata_patch(data, (100, 100))
+    assert patch["schemaVersion"] == "2.0"
+    assert patch["nodes"][0]["at"] == {"x": 0.4, "y": 0.25}
+    assert patch["nodes"][0]["authorGeometry"] == {
+        "shape": "rect", "origin": {"x": 0.2, "y": 0.1}, "size": {"x": 0.4, "y": 0.3},
+    }
+
+
 def test_author_pass_preserves_pixels_outside_mask(tmp_path: Path) -> None:
     """Author-pass overlay changes only the region area; pixels outside every bbox stay intact."""
     m = _load_tool()

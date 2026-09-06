@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   MATERIALS_META,
   CATEGORY_ITEMS,
+  categoryLabel,
+  topCategoryOf,
   QUALITY_COLOR,
   badgeStateOf,
   type MaterialMeta,
@@ -26,7 +28,7 @@ export function BenchTokenLibrary() {
   const [page, setPage] = useState(0)
 
   const list = useMemo(
-    () => (cat === '全部' ? MATERIALS_META : MATERIALS_META.filter((m) => m.category === cat)),
+    () => (cat === '全部' ? MATERIALS_META : MATERIALS_META.filter((m) => topCategoryOf(m) === cat)),
     [cat],
   )
   const pageCount = Math.max(1, Math.ceil(list.length / PAGE))
@@ -57,7 +59,7 @@ export function BenchTokenLibrary() {
               }`}
               style={on ? undefined : { ['--hud-bc' as string]: 'var(--lib-line)' }}
             >
-              {c}
+              {categoryLabel(c)}
             </button>
           )
         })}

@@ -72,6 +72,46 @@ def crop_extract(data: dict[str,Any], out: Path) -> dict[str,Any]:
         manifest["regions"].append({"id":name,"path":path.name,"bbox":{"x":x,"y":y,"width":w,"height":h},"size":{"width":w,"height":h},"building_group":r["building_group"],"shell":r["shell"],"floor":r["floor"],"normalized_frame":r["normalized_frame"],"entrance_anchors":r.get("entrance_anchors",[]),"stair_anchors":r.get("stair_anchors",[])})
     (out/"manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8"); return manifest
 
+def mapdata_patch(data: dict[str, Any], image_size: tuple[int, int]) -> dict[str, Any]:
+    """Convert extracted regions into canonical MapData authorGeometry records."""
+    errors = validate(data, image_size)
+    if errors:
+        raise ValueError("; ".join(errors))
+    width, height = image_size
+    layers: dict[str, dict[str, Any]] = {}
+    nodes: list[dict[str, Any]] = []
+    for region in data["regions"]:
+        x, y, w, h = _box(region["bbox"])
+        floor = region.get("floor") or {}
+        floor_key = floor.get("id", floor.get("name", floor.get("height", 0))) if isinstance(floor, dict) else floor
+        layer_id = f"layer:floor:{floor_key}"
+        layers[layer_id] = {"id": layer_id, "name": str(floor_key)}
+        node = {
+            "id": region["id"],
+            "def": region.get("scene_def", "d:scene/medium"),
+            "scale": region.get("scale", "medium"),
+            "layerId": layer_id,
+            "at": {"x": round((x + w / 2) / width, 6), "y": round((y + h / 2) / height, 6)},
+            "authorGeometry": {
+                "shape": "rect",
+                "origin": {"x": round(x / width, 6), "y": round(y / height, 6)},
+                "size": {"x": round(w / width, 6), "y": round(h / height, 6)},
+            },
+        }
+        if region.get("parent"):
+            node["parent"] = region["parent"]
+        nodes.append(node)
+    return {
+        "patchKind": "wakeup.mapdata.author-geometry.v1",
+        "schemaVersion": "2.0",
+        "layers": list(layers.values()),
+        "nodes": nodes,
+        "decorations": [],
+        "playerSpawns": [],
+        "transitionBundles": {},
+    }
+
+
 def author_pass(data:dict[str,Any], out:Path)->None:
     source=Path(data["source"]["image"]); base=Image.open(source).convert("RGBA"); edited=Path(data["source"].get("author_pass", source)); overlay=Image.open(edited).convert("RGBA")
     if overlay.size != base.size: raise ValueError("author-pass must preserve source dimensions")
@@ -93,6 +133,7 @@ def main()->None:
     p=argparse.ArgumentParser(); sub=p.add_subparsers(dest="cmd",required=True)
     for cmd in ("validate","extract"):
         q=sub.add_parser(cmd); q.add_argument("regions",type=Path); q.add_argument("--out",type=Path)
+    q=sub.add_parser("mapdata-patch"); q.add_argument("regions",type=Path); q.add_argument("--out",type=Path,required=True)
     q=sub.add_parser("author-pass"); q.add_argument("regions",type=Path); q.add_argument("--out",type=Path,required=True)
     a=p.parse_args(); data=json.loads(a.regions.read_text(encoding="utf-8"))
     if a.cmd=="validate":
@@ -101,5 +142,11 @@ def main()->None:
         if errors: raise SystemExit("INVALID: "+"; ".join(errors))
         print(json.dumps({"valid":True,"warnings":data.get("_warnings",[])},ensure_ascii=False))
     elif a.cmd=="extract": print(json.dumps(crop_extract(data,a.out),ensure_ascii=False,indent=2))
+    elif a.cmd=="mapdata-patch":
+        im=Image.open(data["source"]["image"])
+        patch=mapdata_patch(data,im.size)
+        a.out.parent.mkdir(parents=True,exist_ok=True)
+        a.out.write_text(json.dumps(patch,ensure_ascii=False,indent=2),encoding="utf-8")
+        print(json.dumps(patch,ensure_ascii=False,indent=2))
     else: author_pass(data,a.out)
 if __name__=="__main__": main()

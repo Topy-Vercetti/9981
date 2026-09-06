@@ -9,7 +9,7 @@ import type { Def } from '../state/def';
 
 export interface PrefabDef extends Def {
   readonly kind: 'prefab';
-  readonly nodes: { key: string; def: Id; props?: Record<string, Expr> }[];
+  readonly nodes: { key: string; def: Id; parent?: string; props?: Record<string, Expr> }[];
   readonly links: { a: string; b: string; def: Id; directed?: boolean; direction?: string; weight?: number }[];
   readonly entities?: { at: string; def: Id; overrides?: Record<string, Expr> }[];
   readonly attachTo?: string;
@@ -35,14 +35,23 @@ export function buildKeyToIdMap(prefab: PrefabDef, idAllocator: () => Id): Map<s
 }
 
 /** 将预制结构内 Link 的 a/b key 引用重映射为实际 Id（需求8.2）。 */
-export function remapLinks(prefab: PrefabDef, keyToId: Map<string, Id>): { a: Id; b: Id; def: Id; directed?: boolean }[] {
-  return prefab.links.map((l) => {
-    const a = keyToId.get(l.a);
-    const b = keyToId.get(l.b);
+export function remapLinks(prefab: PrefabDef, keyToId: Map<string, Id>): {
+  a: Id; b: Id; def: Id; directed?: boolean; direction?: string; weight?: number
+}[] {
+  return prefab.links.map((link) => {
+    const a = keyToId.get(link.a);
+    const b = keyToId.get(link.b);
     if (a === undefined || b === undefined) {
-      throw new Error(`prefab link 引用了未声明的 key: ${l.a} 或 ${l.b}`);
+      throw new Error(`prefab link 引用了未声明的 key: ${link.a} 或 ${link.b}`);
     }
-    return { a, b, def: l.def, directed: l.directed };
+    return {
+      a,
+      b,
+      def: link.def,
+      directed: link.directed,
+      ...(link.direction !== undefined ? { direction: link.direction } : {}),
+      ...(link.weight !== undefined ? { weight: link.weight } : {}),
+    };
   });
 }
 

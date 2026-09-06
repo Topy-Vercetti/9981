@@ -20,6 +20,7 @@ import {
   EXPR_DISCRIMINANT_KEYS,
   type MapData,
   type MapDataDocument,
+  type AuthorGeometry,
   type MapEdge,
   type MapLayer,
   type MapNode,
@@ -53,6 +54,26 @@ function inRange(value: number): boolean {
 
 function isNormalized(point: Vec2): boolean {
   return inRange(point.x) && inRange(point.y);
+}
+
+function geometryError(geometry: AuthorGeometry): string | undefined {
+  if (geometry.shape === 'rect') {
+    if (!isNormalized(geometry.origin) || !Number.isFinite(geometry.size.x) || !Number.isFinite(geometry.size.y)) {
+      return '矩形坐标必须是有限的归一化数值。';
+    }
+    if (geometry.size.x <= 0 || geometry.size.y <= 0) return '矩形宽高必须大于 0。';
+    if (geometry.origin.x + geometry.size.x > 1 || geometry.origin.y + geometry.size.y > 1) {
+      return '矩形范围不能越过地图边界。';
+    }
+    return undefined;
+  }
+  if (geometry.points.length < 3) return '多边形至少需要 3 个顶点。';
+  if (geometry.points.some((point) => !isNormalized(point))) return '多边形顶点必须位于地图范围内。';
+  const area = Math.abs(geometry.points.reduce((sum, point, index) => {
+    const next = geometry.points[(index + 1) % geometry.points.length] as Vec2;
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0) / 2);
+  return area > 0 ? undefined : '多边形不能退化为线或点。';
 }
 
 /**
@@ -115,6 +136,17 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
         correction: '地图坐标是相对底图的归一化值，两轴都必须在 0 到 1 之间。把节点拖回底图范围内。',
       });
     }
+    const authorGeometryError = node.authorGeometry === undefined ? undefined : geometryError(node.authorGeometry);
+    if (authorGeometryError !== undefined) {
+      findings.push({
+        code: 'MAP_INVALID_AUTHOR_GEOMETRY',
+        severity: 'error',
+        path: `${path}/authorGeometry`,
+        subject: node.id,
+        message: authorGeometryError,
+        correction: '重新绘制一个位于 0-1 范围内且面积大于 0 的矩形或多边形。',
+      });
+    }
 
     // canonical 节点用 layerId（validateLayerContract 守）；legacy 节点的楼层声明检查
     // 已由 validateLegacyFloorDeclaration 提前整体报出（每个未声明节点一条），节点循环
@@ -158,6 +190,58 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
 
   findings.push(...detectParentCycles(map as MapData, nodeById));
 
+  const layerIds = new Set(mapView.layers?.map((layer) => layer.id) ?? []);
+  const seenDecorationIds = new Set<string>();
+  for (const [index, decoration] of (map.decorations ?? []).entries()) {
+    const path = `/decorations/${index}`;
+    if (seenDecorationIds.has(decoration.id)) findings.push({
+      code: 'MAP_DUPLICATE_DECORATION_ID', severity: 'error', path: `${path}/id`, subject: decoration.id,
+      message: `装饰 id「${decoration.id}」重复。`, correction: '为每个装饰分配唯一 id。',
+    });
+    seenDecorationIds.add(decoration.id);
+    if (!isNormalized(decoration.at) || (canonicalShape && !layerIds.has(decoration.layerId))) findings.push({
+      code: 'MAP_INVALID_DECORATION_PLACEMENT', severity: 'error', path, subject: decoration.id,
+      message: `装饰「${decoration.id}」的位置或图层无效。`, correction: '把装饰移回地图范围并选择现有图层。',
+    });
+    if (decoration.geometry !== undefined) {
+      const error = geometryError(decoration.geometry);
+      if (error !== undefined) findings.push({
+        code: 'MAP_INVALID_DECORATION_GEOMETRY', severity: 'error', path: `${path}/geometry`, subject: decoration.id,
+        message: error, correction: '重新绘制合法的装饰范围。',
+      });
+    }
+  }
+
+  const seenSpawnIds = new Set<string>();
+  const occupiedSeats = new Set<string>();
+  for (const [index, spawn] of (map.playerSpawns ?? []).entries()) {
+    const path = `/playerSpawns/${index}`;
+    if (seenSpawnIds.has(spawn.id)) findings.push({
+      code: 'MAP_DUPLICATE_PLAYER_SPAWN_ID', severity: 'error', path: `${path}/id`, subject: spawn.id,
+      message: `出生点 id「${spawn.id}」重复。`, correction: '为每个出生点分配唯一 id。',
+    });
+    seenSpawnIds.add(spawn.id);
+    if (!nodeById.has(spawn.nodeId) || !isNormalized(spawn.at) || (canonicalShape && !layerIds.has(spawn.layerId))) findings.push({
+      code: 'MAP_INVALID_PLAYER_SPAWN', severity: 'error', path, subject: spawn.id,
+      message: `出生点「${spawn.id}」引用了无效节点、图层或位置。`, correction: '把出生点绑定到现有场景和图层并移回地图范围。',
+    });
+    if (spawn.seat !== undefined) {
+      if (occupiedSeats.has(spawn.seat)) findings.push({
+        code: 'MAP_DUPLICATE_PLAYER_SEAT', severity: 'error', path: `${path}/seat`, subject: spawn.id,
+        message: `玩家席位「${spawn.seat}」被多个出生点占用。`, correction: '每个席位只能绑定一个出生点。',
+      });
+      occupiedSeats.add(spawn.seat);
+    }
+  }
+
+  for (const [nodeId, bundle] of Object.entries(map.transitionBundles ?? {})) {
+    const edgeIds = new Set(map.edges.map((edge) => edge.id));
+    if (!nodeById.has(nodeId) || !edgeIds.has(bundle.entranceEdgeId) || !edgeIds.has(bundle.exitEdgeId)) findings.push({
+      code: 'MAP_INVALID_TRANSITION_BUNDLE', severity: 'error', path: `/transitionBundles/${nodeId}`, subject: nodeId,
+      message: `过渡场景包「${nodeId}」没有完整的节点与两侧连接。`, correction: '恢复插边产生的过渡节点、入口连接和出口连接，或删除损坏的来源记录。',
+    });
+  }
+
   // ---- 连接 ---------------------------------------------------------------
   const degree = new Map<string, number>();
   const seenEdgeIds = new Set<string>();
@@ -200,7 +284,7 @@ export function validateMapStructure(map: MapDataDocument): readonly MapDiagnost
         path,
         subject: edge.id,
         message: `连接「${edge.id}」的两个端点是同一个节点。`,
-        correction: '自环没有通行含义。把一端接到别的节点，或删掉这条连接。',
+        correction: '自��没有通行含义。把一端接到别的节点，或删掉这条连接。',
       });
     } else if (endpointsExist) {
       const pairKey = JSON.stringify([edge.a, edge.b].sort((l, r) => l.localeCompare(r, 'en')));
@@ -384,7 +468,7 @@ function validateEdgePath(
   return findings;
 }
 
-/** 方向式枚举的封闭集合（L-07）。非法 token 必须显式拒绝，不能静默丢语义。 */
+/** 方向式枚举的封闭��合（L-07）。非法 token 必须显式拒绝，不能静默丢语义。 */
 const DIRECTIONALITY_SET: ReadonlySet<string> = new Set([
   'bidirectional',
   'unidirectional',

@@ -5,7 +5,7 @@ import { extractToken, forgeModify, moldingSet, synthesizeClaim, synthesizeSubmi
 import type { MetaState } from '../types'
 
 const state: MetaState = {
-  identities: { base: { id: 'base', name: '基体', introduction: '基体', textureAssetRef: assetRefForView('asset:base', 'item-front'), quality: 1, displayCategory: '物品' } },
+  identities: { base: { id: 'base', name: '基体', introduction: '基体', textureAssetRef: assetRefForView('asset:base', 'item-front'), quality: 1, category: 'item', subtypeTags: ['物品'], capabilities: [] } },
   materials: { base: { owned: true, source: 'standard', quality: 1, starred: false, modified: false, isUgcNew: false, equippedTokens: [], weakness: null, limitedFree: false } },
   tokens: { token: { id: 'token', name: '属性', category: '属性', owned: true, quality: 1, starred: false, collectedAt: null } },
   blueprints: {}, quickBar: { materialSlots: [null] }, moldingBar: { unlocked: [true], contents: [null] }, synthesisQueue: [],

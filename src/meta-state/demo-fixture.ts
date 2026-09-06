@@ -11,7 +11,10 @@ export function createDemoMetaStateStore(): MetaStateStore {
     iconAssetRef: assetRefForView('asset:demo-locker', 'icon'),
     textureAssetRef: assetRefForView('asset:demo-locker', 'world-top-down'),
     quality: 1 as const,
-    displayCategory: '装置' as const,
+    category: 'container' as const,
+    subtypeTags: ['装置'],
+    capabilities: ['container', 'carrier'],
+    legacyDisplayCategory: '装置' as const,
   }
   const state: MetaState = {
     identities: { [identity.id]: identity },

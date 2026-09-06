@@ -6,7 +6,7 @@ import { getLibApp, toggleStar } from '../editor-shell/lib/library-store'
 import type { MetaState } from '../../meta-state/types'
 
 const state: MetaState = {
-  identities: { material: { id: 'material', name: '素材', introduction: '素材', textureAssetRef: assetRefForView('asset:m', 'item-front'), quality: 1, displayCategory: '物品' } },
+  identities: { material: { id: 'material', name: '素材', introduction: '素材', textureAssetRef: assetRefForView('asset:m', 'item-front'), quality: 1, category: 'item', subtypeTags: ['物品'], capabilities: [] } },
   materials: { material: { owned: true, source: 'standard', quality: 1, starred: false, modified: false, isUgcNew: false, equippedTokens: [], weakness: null, limitedFree: false } },
   tokens: {}, blueprints: {}, quickBar: { materialSlots: [null] }, moldingBar: { unlocked: [true], contents: [null] }, synthesisQueue: [],
 }

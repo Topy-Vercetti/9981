@@ -1194,7 +1194,7 @@ export function Canvas() {
         }
         return
       }
-      // B2：绕组外接矩形中心整体旋转 10°/格——旋转所有成员框的几何，非仅
+      // B2：绕组外接矩形中心整体旋转 10°/格—���旋转所有成员框的几何，非仅
       // 当前框；多选场景时逐个各自绕自己的组中心转，互不影响。
       if (sel.length > 0 && sel.every((s) => s.type === 'scene')) {
         const step = ev.deltaY > 0 ? 10 : -10
@@ -1635,6 +1635,22 @@ export function Canvas() {
             </g>
           )
         })}
+
+        {/* pure presentation decorations */}
+        {(doc.decorations ?? []).filter((decoration) => decoration.layerId === currentLayerId && decoration.visible).map((decoration) => (
+          <g key={decoration.id} transform={`translate(${decoration.x} ${decoration.y}) rotate(${decoration.rotation}) scale(${decoration.scale})`}>
+            <rect x={-13} y={-13} width={26} height={26} rx={3} fill="var(--panel)" stroke="var(--text-dim)" strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />
+            <text x={0} y={5} textAnchor="middle" fill="var(--text-dim)" fontSize={13} className="pointer-events-none select-none">{getMaterialChar(decoration.materialId)}</text>
+          </g>
+        ))}
+
+        {/* player spawn anchors */}
+        {(doc.playerSpawns ?? []).filter((spawn) => spawn.layerId === currentLayerId).map((spawn) => (
+          <g key={spawn.id} transform={`translate(${spawn.x} ${spawn.y})`} role="img" aria-label={`玩家出生点${spawn.seat ? ` ${spawn.seat}` : ''}`}>
+            <circle r={14} fill="var(--panel)" stroke="var(--primary)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+            <path d="M -6 3 L 0 -5 L 6 3 M 0 -5 V 8" fill="none" stroke="var(--primary)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          </g>
+        ))}
 
         {/* material drag ghost */}
         {dragMaterial &&

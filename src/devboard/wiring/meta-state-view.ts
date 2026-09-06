@@ -23,7 +23,7 @@ export function materialViews(projection: MetaStateProjection): readonly Materia
       name: identity.name,
       introduction: identity.introduction,
       ...(identity.description === undefined ? {} : { description: identity.description }),
-      category: identity.displayCategory,
+      category: identity.category,
       quality: meta.quality,
       owned: meta.owned,
       starred: meta.starred,

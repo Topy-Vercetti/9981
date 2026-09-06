@@ -1,6 +1,7 @@
-export type DisplayCategory =
-  | '装置' | '照明' | '陈设' | '交互' | '线索' | '遮挡'
-  | '物品' | '武器' | '载具' | '生物' | '角色' | '机制' | '氛围' | '蓝本'
+import type { LegacyDisplayCategory, MaterialTopCategory } from './material-taxonomy'
+
+/** @deprecated 仅用于旧存档迁移。新素材必须使用 MaterialTopCategory。 */
+export type DisplayCategory = LegacyDisplayCategory
 
 export type RuntimeEntityKind = 'item' | 'weapon' | 'vehicle' | 'npc' | 'character' | 'interactive' | 'environment'
 export type ActorKind = 'player' | 'ai-player' | 'npc' | 'unbound'
@@ -24,6 +25,26 @@ export interface RuntimeEntityRef {
   readonly id: string
 }
 
+export interface AiPlayerMaterialPayload {
+  readonly characterDef: string
+  readonly controllerRef: string
+  readonly profileRef: string
+  readonly defaultConfig: Readonly<Record<string, string | number | boolean>>
+}
+
+export interface TransitionSceneMaterialPayload {
+  readonly nodeDef: string
+  readonly entranceDef: string
+  readonly exitDef: string
+  readonly defaultDirectionality: 'bidirectional' | 'unidirectional' | 'one-way-down' | 'one-way-up'
+}
+
+export interface DecorationMaterialPayload {
+  readonly defaultLayer?: string
+  readonly defaultScale?: number
+  readonly defaultRotation?: number
+}
+
 export interface MaterialIdentity {
   readonly id: string
   readonly name: string
@@ -32,9 +53,16 @@ export interface MaterialIdentity {
   readonly iconAssetRef?: AssetRef
   readonly textureAssetRef: AssetRef
   readonly quality: 1 | 2 | 3 | 4 | 5
-  readonly displayCategory: DisplayCategory
+  readonly category: MaterialTopCategory
+  readonly subtypeTags: readonly string[]
+  readonly capabilities: readonly string[]
+  /** 旧 14 类只在迁移来源中保留，不再作为顶级筛选。 */
+  readonly legacyDisplayCategory?: DisplayCategory
   readonly runtimeEntityRef?: RuntimeEntityRef
   readonly actorBinding?: ActorBinding
+  readonly aiPlayer?: AiPlayerMaterialPayload
+  readonly transitionScene?: TransitionSceneMaterialPayload
+  readonly decoration?: DecorationMaterialPayload
 }
 
 export interface MaterialMeta {

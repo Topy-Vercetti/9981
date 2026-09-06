@@ -64,6 +64,8 @@ export interface LoadedMatchOptions {
    * 规范化为 canonical，legacy floor 只在导入边界出现。
    */
   readonly map?: MapDataDocument;
+  /** 地图中 AI 玩家包引用的权威素材登记表；只读消费，不属于 NPC 预算。 */
+  readonly materialRegistry?: Readonly<Record<string, import('../../meta-state/types').MaterialIdentity>>;
   /** 可选：AI 预算提供者；不传则本局无 NPC（npcAction 阶段空队列直接通过）。 */
   readonly npcBudget?: () => readonly {
     readonly entry: import('../ai-runtime').NpcEntry;
@@ -115,8 +117,22 @@ export interface LoadedMatch {
   readonly shell: MatchShell;
   /** 只读终局/胜负查询（内部量级）。 */
   readonly terminal: TerminalQuery;
-  /** 演员面：AI runtime（无 NPC 时为 null）。 */
+  /** 演员面：NPC AI runtime（无 NPC 时为 null）；AI 玩家包不会进入此队列。 */
   readonly ai: PlayAiRuntime | null;
+  /** 地图纯表现、出生点及已解析 AI 玩家配置的只读装载描述。 */
+  readonly mapAuthoring?: {
+    readonly decorations: readonly import('../map/types').MapDecoration[];
+    readonly playerSpawns: readonly import('../map/types').MapPlayerSpawn[];
+    readonly aiPlayers: readonly {
+      readonly entityId: string;
+      readonly spawnId: string;
+      readonly materialId: string;
+      readonly characterDef: string;
+      readonly controllerRef: string;
+      readonly profileRef: string;
+      readonly config: Readonly<Record<string, string | number | boolean>>;
+    }[];
+  };
   /** 关联合并快照：把主 holder 的最新可见世界合入 AI runtime 的决策快照，保留 AI 侧
    *  登记（agent / NPC 实体 / npcQueue / 实体作用域 AP）不被主世界覆盖。宿主可在任何
    *  `prop.set` 或阶段推进后调用，保证 AI 仿真分支读到与主世界一致的判罚前置。 */

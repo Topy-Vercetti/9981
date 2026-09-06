@@ -40,7 +40,7 @@ import { createPlayAiRuntime } from '../ai-runtime';
 import type { PlayAiRuntime } from '../ai-runtime';
 import type { DesignCurrencyConfig } from '../../core/kernel/ai/tuning/config-design-currency';
 import { compileMap } from '../map/compile';
-import { normalizeMapDocument } from '../map/types';
+import { normalizeMapDocument, type CanonicalMapData } from '../map/types';
 import { createMatchShell } from './match-shell';
 import { playAutonomousMatch } from './autoplay';
 import type { AutoPlayOptions, AutoPlayResult } from './autoplay';
@@ -141,7 +141,7 @@ export function createLoadedMatch(request: LoadMatchRequest): LoadedMatchResult 
   if (!initFields.ok) {
     return { ok: false, diagnostics: [...load.diagnostics], blocked: load.blocked.map((b) => b.capability) };
   }
-  // 白盒第一刀：装载激活（playpack.activate Op）把 `world.turn` 指向玩法包声明的五阶段表——
+  // 白盒第一刀：装载激活（playpack.activate Op）把 `world.turn` 指向玩法包声明��五阶段表——
   // `playpack-runtime.ts` 的 activate Op 在同一事务内写 `turn.scheduleId/phaseIndex`。
   // createFullHarness 的初始世界用 `sched:fuzz`，若不激活，`schedule.advance` 按 `turn.scheduleId`
   // 查表第一步就 checkInstantiable 失败。这里直接 invoke 激活 Op（`loadCoreMechanics` 已完成引擎层
@@ -162,8 +162,11 @@ export function createLoadedMatch(request: LoadMatchRequest): LoadedMatchResult 
   // legacy v1 先在导入边界经 normalizeMapDocument 规范化为 canonical v2（floor→layers），
   // compileMap 只消费 canonical 形状；legacy floor 不再作为主引用进入编译/装载。
   let mapWarnings: readonly string[] = [];
+  let canonicalMap: CanonicalMapData | null = null;
+  let mapAuthoring: LoadedMatch['mapAuthoring'] = { decorations: [], playerSpawns: [], aiPlayers: [] };
   if (map !== undefined) {
     const canonical = normalizeMapDocument(map);
+    canonicalMap = canonical;
     const compiled = compileMap(canonical);
     if (!compiled.ok) {
       return { ok: false, diagnostics: [...load.diagnostics, ...compiled.diagnostics.map((d) => ({ code: d.code as never, severity: d.severity as 'error', message: d.message, phase: 0, scope: 'definition' as const }))], blocked: load.blocked.map((b) => b.capability) };
@@ -176,6 +179,44 @@ export function createLoadedMatch(request: LoadMatchRequest): LoadedMatchResult 
       return { ok: false, diagnostics: [...load.diagnostics, { code: 'E_OP_NOT_ACCEPTED' as never, severity: 'error' as const, message: `prefab.spawn 失败：${spawned.detail}`, phase: 0, scope: 'definition' as const }], blocked: load.blocked.map((b) => b.capability) };
     }
     mapWarnings = compiled.warnings.map((w) => w.message);
+
+    const orderedSpawns = [...(canonical.playerSpawns ?? [])].sort((left, right) =>
+      (left.seat ?? left.id).localeCompare(right.seat ?? right.id, 'en'));
+    const aiPlayers: NonNullable<LoadedMatch['mapAuthoring']>['aiPlayers'][number][] = [];
+    for (const [index, spawnPoint] of orderedSpawns.entries()) {
+      const materialId = spawnPoint.aiPlayerMaterialId;
+      if (materialId === undefined) continue;
+      const material = request.materialRegistry?.[materialId];
+      if (material?.category !== 'ai-player' || material.aiPlayer === undefined) {
+        return {
+          ok: false,
+          diagnostics: [...load.diagnostics, { code: 'MAP_AI_PLAYER_PACKAGE_INVALID' as never, severity: 'error' as const, message: `出生点 ${spawnPoint.id} 引用的 AI 玩家角色包不完整`, phase: 0, scope: 'definition' as const }],
+          blocked: load.blocked.map((blocked) => blocked.capability),
+        };
+      }
+      const entityId = playerEntityIds[index];
+      if (entityId === undefined) {
+        return {
+          ok: false,
+          diagnostics: [...load.diagnostics, { code: 'MAP_PLAYER_SPAWN_UNASSIGNED' as never, severity: 'error' as const, message: `出生点 ${spawnPoint.id} 没有对应玩家实体`, phase: 0, scope: 'definition' as const }],
+          blocked: load.blocked.map((blocked) => blocked.capability),
+        };
+      }
+      aiPlayers.push({
+        entityId,
+        spawnId: spawnPoint.id,
+        materialId,
+        characterDef: material.aiPlayer.characterDef,
+        controllerRef: material.aiPlayer.controllerRef,
+        profileRef: material.aiPlayer.profileRef,
+        config: { ...material.aiPlayer.defaultConfig, ...(spawnPoint.aiConfigOverrides ?? {}) },
+      });
+    }
+    mapAuthoring = {
+      decorations: canonical.decorations ?? [],
+      playerSpawns: canonical.playerSpawns ?? [],
+      aiPlayers,
+    };
   }
 
   // ---- 演员面：AI runtime 接入同一 holder/registry/ruleProvider ----
@@ -547,8 +588,10 @@ export function createLoadedMatch(request: LoadMatchRequest): LoadedMatchResult 
     projection,
     shell,
     terminal,
-    ai: aiRuntime,
-    bridge,
+  ai: aiRuntime,
+  ...(canonicalMap !== null ? { mapAuthoring } : {}),
+  bridge,
+
     submitter,
     events,
     ui,

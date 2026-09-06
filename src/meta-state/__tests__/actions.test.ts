@@ -6,8 +6,8 @@ import type { MetaState } from '../types'
 
 const initial: MetaState = {
   identities: {
-    standard: { id: 'standard', name: '标准件', introduction: '标准素材', textureAssetRef: assetRefForView('asset:standard', 'item-front'), quality: 1, displayCategory: '物品' },
-    crafted: { id: 'crafted', name: '合成物', introduction: '合成素材', textureAssetRef: assetRefForView('asset:crafted', 'item-front'), quality: 2, displayCategory: '物品' },
+    standard: { id: 'standard', name: '标准件', introduction: '标准素材', textureAssetRef: assetRefForView('asset:standard', 'item-front'), quality: 1, category: 'item', subtypeTags: ['物品'], capabilities: [] },
+    crafted: { id: 'crafted', name: '合成物', introduction: '合成素材', textureAssetRef: assetRefForView('asset:crafted', 'item-front'), quality: 2, category: 'item', subtypeTags: ['物品'], capabilities: [] },
   },
   materials: {
     standard: { owned: true, source: 'standard', quality: 1, starred: false, modified: false, isUgcNew: false, equippedTokens: [], weakness: null, limitedFree: false },

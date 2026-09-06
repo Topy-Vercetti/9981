@@ -1,10 +1,13 @@
 import { MATERIALS, materialById, type Material } from './materials'
-import type { DisplayCategory, MaterialIdentity } from '../../../meta-state/types'
+import type { MaterialIdentity } from '../../../meta-state/types'
+import type { MaterialTopCategory } from '../../../meta-state/material-taxonomy'
 import { assetRefForView } from '../../../meta-state/asset-ref'
 
-const DISPLAY_CATEGORY: Record<Material['category'], DisplayCategory> = {
-  装置: '装置', 照明: '照明', 陈设: '陈设', 交互: '交互', 线索: '线索', 遮挡: '遮挡',
+const TOP_CATEGORY: Record<Material['category'], MaterialTopCategory> = {
+  装置: 'mechanism', 照明: 'decoration', 陈设: 'decoration', 交互: 'mechanism', 线索: 'item', 遮挡: 'decoration',
 }
+
+const CONTAINER_NAMES = new Set(['储物柜', '衣柜', '木箱', '集装箱'])
 
 function slug(name: string): string {
   return name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').toLowerCase()
@@ -21,7 +24,10 @@ export function canonicalMaterialIdentity(material: Material): MaterialIdentity 
     introduction: `${material.name}，可用于梦境地图中的${material.category}表达。`,
     textureAssetRef: assetRefForView('asset:editor-material-atlas', 'world-top-down', `tile:${material.tile}`),
     quality: 1,
-    displayCategory: DISPLAY_CATEGORY[material.category],
+    category: CONTAINER_NAMES.has(material.name) ? 'container' : TOP_CATEGORY[material.category],
+    subtypeTags: [material.category],
+    capabilities: CONTAINER_NAMES.has(material.name) ? ['container', 'carrier'] : [],
+    legacyDisplayCategory: material.category,
   }
 }
 

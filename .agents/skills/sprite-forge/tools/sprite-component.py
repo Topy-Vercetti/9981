@@ -124,8 +124,8 @@ def _gate_error_type(msg: str) -> str:
 
 # 组件基础风格（所有组件共用，硬编码锁定；视角规则单独一块，见 VIEW_RULES）
 COMPONENT_STYLE = (
-    "Front-top axonometric game asset, seen from a conventional elevated front angle. "
-    "Only the top face and front face should be visible; no side face, no rear face, no flat bird's-eye icon. "
+    "Top-down plan view game asset with a clear grounded silhouette and a compact ground shadow. "
+    "NO front face, NO side face, NO perspective depth, NO oblique projection. "
     "Hard-edged solid color blocks, native 64x64 pixel grid aesthetic, "
     "NO anti-aliasing, NO gradients, NO dithering, NO soft blur. "
     "Clean hard silhouette, readable at 64x64. "
@@ -142,17 +142,15 @@ COMPONENT_STYLE = (
 # 权威：docs/表现系统/01_图形化与UI.md §正面俯视视图、PLT-01、05_组件生成风格规范。
 VIEW_RULES = {
     "map": (
-        "FRONT-TOP AXONOMETRIC VIEW ONLY: a conventional oblique front-top sprite. "
-        "The object must read as a shallow 3D form with the top plane and front plane visible. "
-        "NO pure top-down plan view, NO side profile, NO rear face, NO visible side face, "
-        "NO three-quarter side view, NO exaggerated perspective depth. "
-        "Keep the viewing angle fixed and conventional; never collapse the object into a flat bird's-eye icon."
+        "TOP-DOWN PLAN VIEW ONLY: a flat overhead map sprite with its footprint fully readable. "
+        "Add one compact ground shadow directly beneath the footprint to keep it grounded. "
+        "NO front face, NO side face, NO top face perspective, NO three-quarter view, NO isometric view, "
+        "NO oblique projection and NO exaggerated perspective depth."
     ),
     "ui": (
-        "UI / INVENTORY ICON VIEW: the same front-top axonometric view, but compact and highly readable. "
-        "The icon still shows the top plane and front plane, never a side face or flat bird's-eye icon. "
-        "NO pure top-down plan view, NO side profile, NO three-quarter side, NO isometric three-face cube. "
-        "Keep the icon as a front-top oblique object, not a flat overhead symbol."
+        "UI / INVENTORY ICON: use the same TOP-DOWN PLAN VIEW with a compact, highly readable silhouette. "
+        "NO front face, NO side face, NO top face perspective, NO three-quarter view, NO isometric view, "
+        "NO oblique projection and NO sidelong angled object."
     ),
 }
 
@@ -713,6 +711,11 @@ def pixelate_frame(img, target_size: int = 64, colors: int = 64) -> Image.Image:
 
 BATCH_KIND = "wakeup-batch-manifest"
 VALID_CONTEXTS = ("map", "ui")
+PRODUCT_CATEGORIES = (
+    "npc", "ai-player", "vehicle", "item", "mechanism",
+    "decoration", "container", "transition-scene",
+)
+ASSEMBLY_STATUSES = ("visual-only", "complete")
 MAX_STATES = 9  # pick_grid 表支持的最大状态数
 
 
@@ -746,12 +749,28 @@ def _load_registry(path: Path) -> list[dict]:
         name = ent.get("name")
         if not isinstance(name, str) or not name.strip():
             errors.append(f"{tag}: name 必须是非空字符串")
+        elif Path(name).name != name or name in ('.', '..'):
+            errors.append(f"{tag}: name 不得包含路径片段")
         elif name in seen:
             errors.append(f"{tag}: name {name!r} 重复")
         else:
             seen.add(name)
         if ent.get("type") not in SEMANTIC_COLORS:
             errors.append(f"{tag}: type {ent.get('type')!r} 不在 {sorted(SEMANTIC_COLORS)}")
+        category = ent.get("category")
+        if category not in PRODUCT_CATEGORIES:
+            errors.append(f"{tag}: category {category!r} 不在产品八类 {list(PRODUCT_CATEGORIES)}")
+        assembly_status = ent.get("assemblyStatus", "visual-only")
+        if assembly_status not in ASSEMBLY_STATUSES:
+            errors.append(f"{tag}: assemblyStatus 必须是 visual-only|complete")
+        payload = ent.get("payload")
+        if assembly_status == "complete" and category in ("ai-player", "transition-scene") and not isinstance(payload, dict):
+            errors.append(f"{tag}: 完整 {category} 素材必须提供 payload；图片不是完整玩法素材")
+        out_override = ent.get("out_override")
+        if out_override is not None:
+            override_path = Path(out_override)
+            if override_path.is_absolute() or ".." in override_path.parts:
+                errors.append(f"{tag}: out_override 必须是清单目录内的安全相对路径")
         desc = ent.get("desc")
         if not isinstance(desc, str) or not desc.strip():
             errors.append(f"{tag}: desc 必须是非空字符串")
@@ -766,7 +785,7 @@ def _load_registry(path: Path) -> list[dict]:
         provider = ent.get("provider", defaults.get("provider"))
         if provider not in (None, "gpt-image-2", "gemini"):
             errors.append(f"{tag}: provider {provider!r} 必须是 gpt-image-2|gemini")
-            for field in ("cell", "colors"):
+        for field in ("cell", "colors"):
             val = ent.get(field, defaults.get(field, 64 if field == "cell" else 64))
             if not isinstance(val, int) or val <= 0:
                 errors.append(f"{tag}: {field} 必须是正整数")
@@ -774,7 +793,11 @@ def _load_registry(path: Path) -> list[dict]:
             continue  # 已有违规，整批失败；不再追加条目
         normalized.append({
             "name": name,
+            "category": category,
+            "visualSubtype": ent["type"],
             "type": ent["type"],
+            "assemblyStatus": assembly_status,
+            "payload": payload,
             "desc": desc.strip(),
             "states": [s.strip() for s in states],
             "context": context,
@@ -793,7 +816,9 @@ def _load_registry(path: Path) -> list[dict]:
 
 def generate_one(*, comp_type: str, desc: str, states: list[str], context: str,
                  out_dir, provider: str | None = None, reference: str | None = None,
-                 cell: int = 64, colors: int = 64, delay: float = 0) -> dict:
+                 cell: int = 64, colors: int = 64, delay: float = 0,
+                 product_category: str | None = None, assembly_status: str = "visual-only",
+                 gameplay_payload: dict | None = None) -> dict:
     """生成单个组件：出图 → 纯化 → 切格 → 质量闸门 → 像素化 → manifest。
 
     失败统一抛 BatchItemError(stage, error_type, error)，由调用方决定单条中止（单组件
@@ -923,7 +948,10 @@ def generate_one(*, comp_type: str, desc: str, states: list[str], context: str,
 
     manifest = {
         "kind": "wakeup-component",
-        "type": comp_type,
+        "category": product_category,
+        "visualSubtype": comp_type,
+        "assemblyStatus": assembly_status,
+        "gameplayPayload": gameplay_payload,
         "desc": desc,
         "states": states,
         "context": context,
@@ -976,7 +1004,7 @@ def _run_batch(args) -> None:
     failed: list[dict] = []
     for ent in registry:
         out_dir = Path(ent["out_override"]) if ent["out_override"] else base / ent["name"]
-        print(f"\n=== [{ent['name']}] {ent['type']} states={len(ent['states'])} context={ent['context']} ===", flush=True)
+        print(f"\n=== [{ent['name']}] category={ent['category']} visualSubtype={ent['visualSubtype']} assembly={ent['assemblyStatus']} states={len(ent['states'])} context={ent['context']} ===", flush=True)
         if args.dry_run:
             print(build_prompt(ent["type"], ent["desc"], ent["states"], context=ent["context"]), flush=True)
             continue
@@ -989,7 +1017,8 @@ def _run_batch(args) -> None:
                 comp_type=ent["type"], desc=ent["desc"], states=ent["states"],
                 context=ent["context"], out_dir=out_dir, provider=ent["provider"],
                 reference=ent["reference"], cell=ent["cell"], colors=ent["colors"],
-                delay=args.delay,
+                delay=args.delay, product_category=ent["category"],
+                assembly_status=ent["assemblyStatus"], gameplay_payload=ent["payload"],
             )
             succeeded.append(ent["name"])
         except BatchItemError as e:
@@ -1045,7 +1074,7 @@ def main() -> None:
     parser.add_argument("--reference", default=None,
                         help="风格参考图（可选，图生图锁风格）")
     parser.add_argument("--out", default=None, type=Path,
-                        help="输出目录；批量模式忽略（按清单 name 落到清单同目录）")
+                        help="输出目��；批量模式忽略（按清单 name 落到清单同目录）")
     parser.add_argument("--cell", type=int, default=64, help="成品帧尺寸（默认 64）")
     parser.add_argument("--colors", type=int, default=64, help="像素化色彩数（默认 64，32 颗粒感明显）")
     parser.add_argument("--registry", default=None, type=Path,

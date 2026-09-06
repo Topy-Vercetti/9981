@@ -23,6 +23,8 @@ export type ElementType =
   | 'obstruction'
   | 'terrain'
   | 'placement'
+  | 'decoration'
+  | 'player-spawn'
 
 export interface Vec {
   x: number
@@ -164,6 +166,37 @@ export interface Placement {
   y: number
 }
 
+export interface Decoration {
+  id: string
+  materialId: string
+  layerId: string
+  x: number
+  y: number
+  scale: number
+  rotation: number
+  zOrder: number
+  visible: boolean
+}
+
+export interface PlayerSpawn {
+  id: string
+  sceneId: string
+  layerId: string
+  x: number
+  y: number
+  seat?: string
+  team?: string
+  aiPlayerMaterialId?: string
+  aiConfigOverrides?: Record<string, string | number | boolean>
+}
+
+export interface TransitionBundle {
+  materialId: string
+  replacedEdgeId: string
+  entranceEdgeId: string
+  exitEdgeId: string
+}
+
 export interface MapDoc {
   id: string
   name: string
@@ -179,6 +212,9 @@ export interface MapDoc {
   obstructions: Obstruction[]
   terrains: Terrain[]
   placements: Placement[]
+  decorations?: Decoration[]
+  playerSpawns?: PlayerSpawn[]
+  transitionBundles?: Record<string, TransitionBundle>
 }
 
 export interface Selectable {

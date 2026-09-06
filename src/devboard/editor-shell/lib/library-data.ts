@@ -13,7 +13,8 @@
    ========================================================================= */
 
 import type { MaterialCategory } from './materials'
-import { CATEGORIES, tileStyle } from './materials'
+import { CATEGORIES as VISUAL_CATEGORIES, tileStyle } from './materials'
+import { MATERIAL_CATEGORY_LABELS, MATERIAL_TOP_CATEGORIES, type MaterialTopCategory } from '../../../meta-state/material-taxonomy'
 
 export type { MaterialCategory }
 export { tileStyle }
@@ -369,7 +370,7 @@ function derive(): MaterialMeta[] {
   if (SOURCE_CYCLE.length === 0) throw new Error('Source cycle must not be empty')
   let n = 0
   for (let round = 0; round < 3; round++) {
-    CATEGORIES.forEach((cat) => {
+    VISUAL_CATEGORIES.forEach((cat) => {
       NAMES[cat].forEach((name, i) => {
         const tiles = CAT_TILES[cat]
         if (tiles.length === 0) throw new Error(`Category ${cat} has no tiles`)
@@ -428,7 +429,20 @@ export const BLUEPRINTS: BlueprintMeta[] = [
    ========================================================================== */
 
 export type Scope = 'all' | 'owned'
-export type CategoryFilter = '全部' | MaterialCategory
+export type CategoryFilter = '全部' | MaterialTopCategory
+
+const CONTAINER_NAMES = new Set(['储物柜', '衣柜', '木箱', '集装箱'])
+
+export function topCategoryOf(material: Pick<MaterialMeta, 'name' | 'category'>): MaterialTopCategory {
+  if (CONTAINER_NAMES.has(material.name)) return 'container'
+  if (material.category === '线索') return 'item'
+  if (material.category === '装置' || material.category === '交互') return 'mechanism'
+  return 'decoration'
+}
+
+export function categoryLabel(category: CategoryFilter): string {
+  return category === '全部' ? category : MATERIAL_CATEGORY_LABELS[category]
+}
 
 /** 星标置顶（同筛选栏内排首）；其余保持原序，稳定排序 */
 export function starredFirst(list: MaterialMeta[], isStarred: (id: string) => boolean): MaterialMeta[] {
@@ -447,9 +461,9 @@ export function filteredMaterials(
   opts: { scope: Scope; category: CategoryFilter; query: string; isStarred: (id: string) => boolean },
 ): MaterialMeta[] {
   const scoped = opts.scope === 'owned' ? all.filter((m) => m.owned) : all
-  const byCat = opts.category === '全部' ? scoped : scoped.filter((m) => m.category === opts.category)
+  const byCat = opts.category === '全部' ? scoped : scoped.filter((m) => topCategoryOf(m) === opts.category)
   const q = opts.query.trim()
-  const byQuery = q ? byCat.filter((m) => m.name.includes(q) || m.category.includes(q)) : byCat
+  const byQuery = q ? byCat.filter((m) => m.name.includes(q) || m.category.includes(q) || categoryLabel(topCategoryOf(m)).includes(q)) : byCat
   return starredFirst(byQuery, opts.isStarred)
 }
 
@@ -460,7 +474,7 @@ export const SCOPE_ITEMS: { key: Scope; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'owned', label: '我的素材' },
 ]
-export const CATEGORY_ITEMS: CategoryFilter[] = ['全部', ...CATEGORIES]
+export const CATEGORY_ITEMS: CategoryFilter[] = ['全部', ...MATERIAL_TOP_CATEGORIES]
 
 /** 图鉴统计（静态占位，后续接真实进度） */
 export const COLLECTION = {

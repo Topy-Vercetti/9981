@@ -81,13 +81,13 @@ function makePrefabSpawn(deps: PrefabOpsDeps): OpImpl<PrefabSpawnArgs, PrefabHan
     let nextNodes = { ...draft.nodes };
     for (const nodeSpec of prefab.nodes) {
       const id = keyToId.get(nodeSpec.key) as Id;
-      // L-07 透传：parent 经 props 传入，prefab.spawn 传给 createNodeShape
-      const parentStr = nodeSpec.props?.['parent'];
-      const parent = typeof parentStr === 'string' ? (keyToId.get(parentStr) as Id | undefined) ?? parentStr as Id : undefined;
+      const parent = nodeSpec.parent === undefined
+        ? undefined
+        : (keyToId.get(nodeSpec.parent) as Id | undefined) ?? nodeSpec.parent as Id;
       nextNodes[id] = createNodeShape(id, nodeSpec.def, { parent });
     }
 
-    let remappedLinks: { a: Id; b: Id; def: Id; directed?: boolean }[];
+    let remappedLinks: { a: Id; b: Id; def: Id; directed?: boolean; direction?: string; weight?: number }[];
     try {
       remappedLinks = remapLinks(prefab, keyToId);
     } catch (e) {
@@ -102,13 +102,11 @@ function makePrefabSpawn(deps: PrefabOpsDeps): OpImpl<PrefabSpawnArgs, PrefabHan
     for (const l of remappedLinks) {
       const linkId = nextId('l');
       linkIds.push(linkId);
-      // L-07 透传：weight 经 PrefabDef.links[].weight 传入（若有）；direction 保持完整 token
-      const linkSpec = prefab.links.find((pl) => pl.a === l.a && pl.b === l.b) ?? { weight: undefined, direction: undefined };
       nextLinks[linkId] = createLinkShape(linkId, l.a, l.b, {
         def: l.def,
         directed: l.directed,
-        weight: (linkSpec as { weight?: number }).weight,
-        direction: (linkSpec as { direction?: string }).direction,
+        weight: l.weight,
+        direction: l.direction,
       });
     }
 
@@ -122,7 +120,7 @@ function makePrefabSpawn(deps: PrefabOpsDeps): OpImpl<PrefabSpawnArgs, PrefabHan
 
     // 需求8.1：批量创建实体（entities 字段声明的预制结构实体，overrides 的 Expr 求值留给完整
     // FlowInterpreter 接线场景使用，此处只处理静态 def，不对 overrides 做求值——
-    // PrefabDef.entities[].overrides 是 Expr 而不是 Value，求值需要 EvalContext，
+    // PrefabDef.entities[].overrides 是 Expr 而不是 Value��求值需要 EvalContext，
     // 这里的判断：Op 实现本身不持有 ExprEngine 依赖，overrides 求值留给调用方在
     // entities 声明之外通过后续 prop.set 完成，不在 spawn 内联求值）。
     let nextEntities = draft.entities;

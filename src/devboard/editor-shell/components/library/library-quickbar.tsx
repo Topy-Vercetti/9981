@@ -9,6 +9,8 @@ import {
   MATERIALS_META,
   materialMetaById,
   CATEGORY_ITEMS,
+  categoryLabel,
+  topCategoryOf,
   badgeStateOf,
   type CategoryFilter,
   type MaterialMeta,
@@ -51,7 +53,7 @@ export function LibraryQuickbar() {
   const [catOpen, setCatOpen] = useState(false)
 
   const matrix = useMemo(() => {
-    const byCat = cat === '全部' ? MATERIALS_META : MATERIALS_META.filter((m) => m.category === cat)
+    const byCat = cat === '全部' ? MATERIALS_META : MATERIALS_META.filter((m) => topCategoryOf(m) === cat)
     const q = query.trim()
     return (q ? byCat.filter((m) => m.name.includes(q)) : byCat).slice(0, 70)
   }, [cat, query])
@@ -122,7 +124,7 @@ export function LibraryQuickbar() {
                 style={{ ['--hud-bc' as string]: 'var(--lib-line)' }}
               >
                 <IconFilter width={15} height={15} className="text-[color:var(--cyan)]" />
-                {cat}
+                {categoryLabel(cat)}
                 <ChevronDown size={14} className={`ml-auto text-[color:var(--lib-dim)] transition-transform ${catOpen ? 'rotate-180' : ''}`} />
               </WeightedButton>
               <AnimatePresence>
@@ -147,7 +149,7 @@ export function LibraryQuickbar() {
                           c === cat ? 'text-[color:var(--cyan)]' : 'text-[color:var(--lib-text)]'
                         }`}
                       >
-                        {c}
+                        {categoryLabel(c)}
                       </button>
                     ))}
                   </motion.div>

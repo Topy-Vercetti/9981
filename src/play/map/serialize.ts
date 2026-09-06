@@ -47,6 +47,7 @@ function serializeNode(node: CanonicalMapData['nodes'][number]): Record<string, 
   };
   if (node.parent !== undefined) record['parent'] = node.parent;
   if (node.name !== undefined) record['name'] = node.name;
+  if (node.authorGeometry !== undefined) record['authorGeometry'] = node.authorGeometry;
   return record;
 }
 
@@ -94,6 +95,9 @@ export function serializeMapData(map: CanonicalMapData): string {
     nodes: map.nodes.map(serializeNode),
     edges: map.edges.map(serializeEdge),
     placements: map.placements.map(serializePlacement),
+    decorations: map.decorations,
+    playerSpawns: map.playerSpawns,
+    transitionBundles: map.transitionBundles,
   };
   return JSON.stringify(document, null, 2);
 }
@@ -110,6 +114,9 @@ export function parseMapData(json: string): CanonicalMapData {
     nodes?: readonly Record<string, unknown>[];
     edges?: readonly unknown[];
     placements?: readonly unknown[];
+    decorations?: readonly unknown[];
+    playerSpawns?: readonly unknown[];
+    transitionBundles?: Readonly<Record<string, unknown>>;
     backdrop: unknown;
     id: string;
     name: string;
@@ -128,6 +135,9 @@ export function parseMapData(json: string): CanonicalMapData {
     nodes: (raw.nodes ?? []).map((node) => ({ ...(node as object), floor: (node as Record<string, unknown>).floor ?? 0 })),
     edges: raw.edges ?? [],
     placements: raw.placements ?? [],
+    decorations: raw.decorations ?? [],
+    playerSpawns: raw.playerSpawns ?? [],
+    transitionBundles: raw.transitionBundles ?? {},
   } as unknown as MapDataDocument;
   return normalizeMapDocument(legacy);
 }

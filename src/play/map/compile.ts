@@ -28,13 +28,17 @@ export type CompileResult =
  * PrefabDef 内部用 key 而非 Id 标识节点，`buildKeyToIdMap` 在 spawn 时才分配真实 Id。
  * 地图节点 id 直接充当 key：它们在一张地图内已被校验为唯一，正好满足 key 的要求。
  *
- * L-07 透传：`parent` 经 props 传入 PrefabDef，`prefab.spawn` 读 props.parent 传给 createNodeShape。
+ * `parent` 使用 PrefabDef 的显式字段，spawn 时按内部 key 重映射后传给 createNodeShape。
  */
-function nodeSpecOf(node: CanonicalMapNode): { key: string; def: string; props?: Record<string, Expr> } {
+function nodeSpecOf(node: CanonicalMapNode): { key: string; def: string; parent?: string; props?: Record<string, Expr> } {
   const props: Record<string, Expr> = { scale: node.scale };
   if (node.name !== undefined) props['name'] = node.name;
-  if (node.parent !== undefined) props['parent'] = node.parent;
-  return { key: node.id, def: node.def, props };
+  return {
+    key: node.id,
+    def: node.def,
+    ...(node.parent !== undefined ? { parent: node.parent } : {}),
+    props,
+  };
 }
 
 /**
@@ -130,7 +134,7 @@ export function adjacencyOf(map: MapDataDocument): ReadonlyMap<string, readonly 
  * 连通分量。编辑器用它回答"这张图有没有玩家永远到不了的孤岛"。
  *
  * 拓扑允许不连通（引擎层需求7.6），所以这**不是** error——一张地图可能故意有需要载具才能到的
- * 区域。但它值得提示，因为绝大多数不连通是画漏了一条边。方向性在这里被忽略：判定的是
+ * 区域。但它值得提示，因为���大多数不连通是画漏了一条边。方向性在这里被忽略：判定的是
  * "有没有一片区域和主体完全没有连线"，而不是"能不能单向抵达"。
  */
 export function connectedGroups(map: MapDataDocument): readonly (readonly string[])[] {

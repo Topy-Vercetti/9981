@@ -73,6 +73,11 @@ export const ADMITTED_CHILD_SCALES: Readonly<Record<SceneScale, readonly SceneSc
 /** 过渡连接的方向性。取自 `scene.valueset.transition_directionalities`。 */
 export type Directionality = 'bidirectional' | 'unidirectional' | 'one-way-down' | 'one-way-up';
 
+/** 作者绘制的场景范围；坐标始终归一化。 */
+export type AuthorGeometry =
+  | { readonly shape: 'rect'; readonly origin: Vec2; readonly size: Vec2 }
+  | { readonly shape: 'polygon'; readonly points: readonly Vec2[] };
+
 /**
  * 一个天然场景节点。
  *
@@ -92,18 +97,14 @@ export interface MapNode {
   /**
    * 上级天然场景 id。缺省表示顶层。
    *
-   * ⚠️ 未接通（见 docs/L3_玩法层/07_地图生产管线.md 第五节）：`PrefabDef.nodes[]` 没有 parent
-   * 字段，`prefab.spawn` 建节点时不传，所以运行期所有场景都是平的。校验器仍然完整检查层级
-   * （MAP_PARENT_NOT_FOUND / MAP_ILLEGAL_SCENE_NESTING / MAP_PARENT_CYCLE）——那些检查本身
-   * 是对的，只是它们守的字段目前到不了运行期。
-   *
-   * 这不是小洞：L2/03 的距离公式建立在「同一天然场景 / 跨天然场景」之上，微型场景也靠
-   * `Node.parent` 挂载（micro-scene.ts），`graph.ts` 按 parent 查子节点。层级塌平，距离模型
-   * 就没有依据。`node.create` 本来接受 parent——只有预制结构这条批量路径表达不出来。
+   * 编译后进入 `PrefabDef.nodes[].parent`，spawn 时先把地图 key 重映射为实际 Node id，
+   * 再传给 `createNodeShape`。结构校验同时守不存在父级、非法尺度嵌套与父子环。
    */
   readonly parent?: string;
   /** 玩家可见名称。`playerFacing` 的节点必须有。 */
   readonly name?: string;
+  /** 编辑器、区域提取与表现投影共同使用的作者范围。 */
+  readonly authorGeometry?: AuthorGeometry;
 }
 
 /**
@@ -114,12 +115,12 @@ export interface MapNode {
  * 数值由该门户类型在基类层声明——否则同一类楼梯会在不同地图里代价不同，平衡数值就散了。
  *
  * 曲线更不参与代价：`metrics.ts` 的代价是 `link.weight * node.weight` 相乘，玩家可见刻度受
- * 宪法 1-5 约束，���作者画一条绕远的路不该因此变成 weight=47。本文件不 import curve.ts，
+ * 宪法 1-5 约束�����作者画一条绕远的路不该因此变成 weight=47。本文件不 import curve.ts，
  * 这条由依赖结构保证。
  *
- * ⚠️ 未接通（见 docs/L3_玩法层/07_地图生产管线.md 第五节）：`PrefabDef.links[]` 没有 weight
- * 字段，`prefab.spawn` 调 `createLinkShape` 时不传，所以运行期所有连接的 weight 都是默认值 1。
- * 门户类型本身也还没在 src/class/ 登记（只有抽象的 transition.class.scene_link）。两件事要一起做。
+   * `PrefabDef.links[].weight` 到 `createLinkShape` 的传播通道已接通；MapData 仍不允许作者逐边填值。
+   * 具体 weight 必须由门户 def/玩法登记解析后交给编译入口。
+
  */
 export interface MapEdge {
   readonly id: string;
@@ -164,6 +165,39 @@ export interface MapPlacement {
   readonly overrides?: Readonly<Record<string, unknown>>;
   /** 是否为地图自带的临时免费实例。随复制传染，不靠推导。 */
   readonly temporaryFree?: boolean;
+}
+
+/** 纯表现装饰。它随地图保存，但 compileMap 永远不会生成玩法实体。 */
+export interface MapDecoration {
+  readonly id: string;
+  readonly assetRef: string;
+  readonly layerId: string;
+  readonly at: Vec2;
+  readonly scale?: number;
+  readonly rotation?: number;
+  readonly zOrder?: number;
+  readonly visible?: boolean;
+  readonly geometry?: AuthorGeometry;
+}
+
+/** 地图出生点。AI 玩家包在此绑定，不作为普通 placement。 */
+export interface MapPlayerSpawn {
+  readonly id: string;
+  readonly nodeId: string;
+  readonly layerId: string;
+  readonly at: Vec2;
+  readonly seat?: string;
+  readonly team?: string;
+  readonly aiPlayerMaterialId?: string;
+  readonly aiConfigOverrides?: Readonly<Record<string, string | number | boolean>>;
+}
+
+/** 编辑器插边来源；运行时仍只消费普通节点与普通边。 */
+export interface TransitionBundleProvenance {
+  readonly materialId: string;
+  readonly replacedEdgeId: string;
+  readonly entranceEdgeId: string;
+  readonly exitEdgeId: string;
 }
 
 /** 地图图像媒介。SVG 与位图在图层、变换和投影中完全同级。 */
@@ -212,6 +246,9 @@ export interface MapData {
   readonly nodes: readonly MapNode[];
   readonly edges: readonly MapEdge[];
   readonly placements: readonly MapPlacement[];
+  readonly decorations?: readonly MapDecoration[];
+  readonly playerSpawns?: readonly MapPlayerSpawn[];
+  readonly transitionBundles?: Readonly<Record<string, TransitionBundleProvenance>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +290,13 @@ export interface MapLayer {
  * Canonical 地图：以 `layers` 列表 + 节点 `layerId` 引用表达层级。
  * `schemaVersion` 升到 `'2.0'`，不携带 legacy `floor` / `floors` 字段。
  */
-export interface CanonicalMapData extends Omit<MapData, 'floors' | 'nodes' | 'schemaVersion'> {
+export interface CanonicalMapData extends Omit<MapData, 'floors' | 'nodes' | 'schemaVersion' | 'decorations' | 'playerSpawns' | 'transitionBundles'> {
   readonly schemaVersion: '2.0';
   readonly layers: readonly MapLayer[];
   readonly nodes: readonly CanonicalMapNode[];
+  readonly decorations?: readonly MapDecoration[];
+  readonly playerSpawns?: readonly MapPlayerSpawn[];
+  readonly transitionBundles?: Readonly<Record<string, TransitionBundleProvenance>>;
 }
 
 /** Canonical 节点：用 `layerId` 引用 `CanonicalMapData.layers` 中的唯一图层。 */
@@ -347,6 +387,12 @@ function normalizeMapScale(scale: MapScale | undefined): MapScale {
   };
 }
 
+function normalizeAuthorGeometry(geometry: AuthorGeometry): AuthorGeometry {
+  return geometry.shape === 'rect'
+    ? { shape: 'rect', origin: clonePoint(geometry.origin), size: clonePoint(geometry.size) }
+    : { shape: 'polygon', points: geometry.points.map(clonePoint) };
+}
+
 function normalizeMapNodeBase(node: {
   readonly id: string;
   readonly def: string;
@@ -354,7 +400,8 @@ function normalizeMapNodeBase(node: {
   readonly at: Vec2;
   readonly parent?: string;
   readonly name?: string;
-}): Pick<MapNode, 'id' | 'def' | 'scale' | 'at' | 'parent' | 'name'> {
+  readonly authorGeometry?: AuthorGeometry;
+}): Pick<MapNode, 'id' | 'def' | 'scale' | 'at' | 'parent' | 'name' | 'authorGeometry'> {
   return {
     id: node.id,
     def: node.def,
@@ -362,6 +409,7 @@ function normalizeMapNodeBase(node: {
     at: clonePoint(node.at),
     ...(node.parent !== undefined ? { parent: node.parent } : {}),
     ...(node.name !== undefined ? { name: node.name } : {}),
+    ...(node.authorGeometry !== undefined ? { authorGeometry: normalizeAuthorGeometry(node.authorGeometry) } : {}),
   };
 }
 
@@ -418,6 +466,39 @@ function normalizeMapPlacement(placement: MapPlacement): MapPlacement {
   };
 }
 
+function normalizeMapDecoration(decoration: MapDecoration): MapDecoration {
+  return {
+    id: decoration.id,
+    assetRef: decoration.assetRef,
+    layerId: decoration.layerId,
+    at: clonePoint(decoration.at),
+    ...(decoration.scale !== undefined ? { scale: decoration.scale } : {}),
+    ...(decoration.rotation !== undefined ? { rotation: decoration.rotation } : {}),
+    ...(decoration.zOrder !== undefined ? { zOrder: decoration.zOrder } : {}),
+    ...(decoration.visible !== undefined ? { visible: decoration.visible } : {}),
+    ...(decoration.geometry !== undefined ? { geometry: normalizeAuthorGeometry(decoration.geometry) } : {}),
+  };
+}
+
+function normalizeMapPlayerSpawn(spawn: MapPlayerSpawn): MapPlayerSpawn {
+  return {
+    id: spawn.id,
+    nodeId: spawn.nodeId,
+    layerId: spawn.layerId,
+    at: clonePoint(spawn.at),
+    ...(spawn.seat !== undefined ? { seat: spawn.seat } : {}),
+    ...(spawn.team !== undefined ? { team: spawn.team } : {}),
+    ...(spawn.aiPlayerMaterialId !== undefined ? { aiPlayerMaterialId: spawn.aiPlayerMaterialId } : {}),
+    ...(spawn.aiConfigOverrides !== undefined ? { aiConfigOverrides: { ...spawn.aiConfigOverrides } } : {}),
+  };
+}
+
+function normalizeTransitionBundles(
+  bundles: Readonly<Record<string, TransitionBundleProvenance>> | undefined,
+): Readonly<Record<string, TransitionBundleProvenance>> {
+  return Object.fromEntries(Object.entries(bundles ?? {}).map(([nodeId, bundle]) => [nodeId, { ...bundle }]));
+}
+
 function uniqueSortedFloors(values: readonly number[]): readonly number[] {
   return [...new Set(values)].sort((left, right) => left - right);
 }
@@ -458,6 +539,9 @@ export function normalizeMapDocument(document: MapDataDocument): CanonicalMapDat
       nodes: normalizeCanonicalNodes(document.nodes),
       edges: document.edges.map(normalizeMapEdge),
       placements: document.placements.map(normalizeMapPlacement),
+      decorations: (document.decorations ?? []).map(normalizeMapDecoration),
+      playerSpawns: (document.playerSpawns ?? []).map(normalizeMapPlayerSpawn),
+      transitionBundles: normalizeTransitionBundles(document.transitionBundles),
     };
   }
 
@@ -471,5 +555,8 @@ export function normalizeMapDocument(document: MapDataDocument): CanonicalMapDat
     nodes: normalizeLegacyNodes(document.nodes),
     edges: document.edges.map(normalizeMapEdge),
     placements: document.placements.map(normalizeMapPlacement),
+    decorations: (document.decorations ?? []).map(normalizeMapDecoration),
+    playerSpawns: (document.playerSpawns ?? []).map(normalizeMapPlayerSpawn),
+    transitionBundles: normalizeTransitionBundles(document.transitionBundles),
   };
 }

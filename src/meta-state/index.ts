@@ -1,4 +1,5 @@
 export * from './types'
+export * from './material-taxonomy'
 export * from './asset-ref'
 export * from './actor-binding'
 export * from './profile-refs'

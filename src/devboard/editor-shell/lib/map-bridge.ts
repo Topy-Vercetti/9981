@@ -14,7 +14,7 @@
    已验证的地图能进编辑器继续编辑。
    ========================================================================= */
 
-import { STANDARD_CHARACTER_WIDTH, WORLD, type MapDoc, type Layer, type SceneNode, type Edge } from './map-types'
+import { STANDARD_CHARACTER_WIDTH, WORLD, sceneGroupBBox, boxesOfScene, type MapDoc, type Layer, type SceneNode, type Edge } from './map-types'
 import { uid } from './editor-store'
 import type {
   CanonicalMapData,
@@ -110,6 +110,16 @@ export function editorDocToCanonical(doc: MapDoc): CanonicalMapData {
       layerId: n.layerId,
       ...(n.parent !== undefined ? { parent: n.parent } : {}),
       ...(n.name !== undefined ? { name: n.name } : {}),
+      ...(() => {
+        const bounds = sceneGroupBBox(boxesOfScene(n.id, doc))
+        return bounds === null ? {} : {
+          authorGeometry: {
+            shape: 'rect' as const,
+            origin: { x: nx(bounds.x), y: ny(bounds.y) },
+            size: { x: nx(bounds.width), y: ny(bounds.height) },
+          },
+        }
+      })(),
     }
     return node
   })
@@ -145,6 +155,27 @@ export function editorDocToCanonical(doc: MapDoc): CanonicalMapData {
     nodes,
     edges,
     placements,
+    decorations: (doc.decorations ?? []).map((decoration) => ({
+      id: decoration.id,
+      assetRef: decoration.materialId,
+      layerId: decoration.layerId,
+      at: { x: nx(decoration.x), y: ny(decoration.y) },
+      scale: decoration.scale,
+      rotation: decoration.rotation,
+      zOrder: decoration.zOrder,
+      visible: decoration.visible,
+    })),
+    playerSpawns: (doc.playerSpawns ?? []).map((spawn) => ({
+      id: spawn.id,
+      nodeId: spawn.sceneId,
+      layerId: spawn.layerId,
+      at: { x: nx(spawn.x), y: ny(spawn.y) },
+      ...(spawn.seat !== undefined ? { seat: spawn.seat } : {}),
+      ...(spawn.team !== undefined ? { team: spawn.team } : {}),
+      ...(spawn.aiPlayerMaterialId !== undefined ? { aiPlayerMaterialId: spawn.aiPlayerMaterialId } : {}),
+      ...(spawn.aiConfigOverrides !== undefined ? { aiConfigOverrides: spawn.aiConfigOverrides } : {}),
+    })),
+    transitionBundles: { ...(doc.transitionBundles ?? {}) },
   }
 }
 
@@ -209,6 +240,17 @@ export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
 
   // 场景框：按节点锚点生成一个默认矩形，让节点在画布上有可视实体。
   const sceneBoxes = sceneNodes.map((n, i) => {
+    const geometry = canonical.nodes[i]?.authorGeometry
+    if (geometry?.shape === 'rect') {
+      return {
+        id: `bx_${i}_${uid('edge').slice(-4)}`,
+        sceneId: n.id,
+        x: wx(geometry.origin.x),
+        y: wy(geometry.origin.y),
+        width: wx(geometry.size.x),
+        height: wy(geometry.size.y),
+      }
+    }
     const w = n.scale === 'large' ? 200 : n.scale === 'medium' ? 140 : 90
     const h = n.scale === 'large' ? 120 : n.scale === 'medium' ? 84 : 56
     return {
@@ -247,5 +289,28 @@ export function canonicalToEditorDoc(canonical: CanonicalMapData): MapDoc {
     obstructions: [],
     terrains: [],
     placements,
+    decorations: (canonical.decorations ?? []).map((decoration) => ({
+      id: decoration.id,
+      materialId: decoration.assetRef,
+      layerId: decoration.layerId,
+      x: wx(decoration.at.x),
+      y: wy(decoration.at.y),
+      scale: decoration.scale ?? 1,
+      rotation: decoration.rotation ?? 0,
+      zOrder: decoration.zOrder ?? 0,
+      visible: decoration.visible ?? true,
+    })),
+    playerSpawns: (canonical.playerSpawns ?? []).map((spawn) => ({
+      id: spawn.id,
+      sceneId: spawn.nodeId,
+      layerId: spawn.layerId,
+      x: wx(spawn.at.x),
+      y: wy(spawn.at.y),
+      ...(spawn.seat !== undefined ? { seat: spawn.seat } : {}),
+      ...(spawn.team !== undefined ? { team: spawn.team } : {}),
+      ...(spawn.aiPlayerMaterialId !== undefined ? { aiPlayerMaterialId: spawn.aiPlayerMaterialId } : {}),
+      ...(spawn.aiConfigOverrides !== undefined ? { aiConfigOverrides: { ...spawn.aiConfigOverrides } } : {}),
+    })),
+    transitionBundles: { ...(canonical.transitionBundles ?? {}) },
   }
 }
