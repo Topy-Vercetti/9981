@@ -252,7 +252,7 @@ function QuickSlot({
               title={material.name}
               className="group h-full w-full cursor-pointer"
             >
-              <LibTile tile={material.tile} glow={material.glow} className="h-full w-full" />
+              <LibTile tile={material.tile} glow={material.glow} icon={material.icon} className="h-full w-full" />
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -301,7 +301,7 @@ function MatrixCell({ material }: { material: MaterialMeta }) {
         className={`lib-tile chamfer relative h-full w-full ${b.ugc ? 'lib-disabled' : 'cursor-grab active:cursor-grabbing'}`}
         style={{ ['--hud-bc' as string]: 'var(--lib-line)' }}
       >
-        <LibTile tile={material.tile} glow={material.glow} className="h-full w-full" />
+        <LibTile tile={material.tile} glow={material.glow} icon={material.icon} className="h-full w-full" />
         {/* 关键角标：限免绿点 / UGC 青点 */}
         {b.free && <span className="absolute right-0.5 top-0.5"><Chip label="限免" tone="free" compact /></span>}
         {b.ugc && <span className="absolute right-0.5 top-0.5"><Chip label="UGC" tone="ugc" compact /></span>}

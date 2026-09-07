@@ -161,7 +161,7 @@ function Card({ asset, selected }: { asset: MaterialMeta; selected: boolean }) {
       >
         {/* 贴图槽 */}
         <div className="lib-tile chamfer relative h-full w-full">
-          <LibTile tile={asset.tile} glow={asset.glow} textureUrl={textureUrl} className="h-full w-full" />
+          <LibTile tile={asset.tile} glow={asset.glow} textureUrl={textureUrl} icon={asset.icon} className="h-full w-full" />
         </div>
 
         {/* 角标组（星标 + 限免/UGC/合成/已改动） */}

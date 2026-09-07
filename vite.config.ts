@@ -14,6 +14,10 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // '@editor' 是 editor-shell 内部实际在用的别名（组件/lib 互引全走这个前缀）；
+      // 之前只注册了 '@'，rollup-plugin-alias 按「精确匹配或 `find + '/'` 前缀匹配」，
+      // 不会把 '@editor/...' 误判成 '@' 的前缀，因此该别名此前是空的、整个 shell 起不来。
+      '@editor': fileURLToPath(new URL('./src/devboard/editor-shell', import.meta.url)),
       '@': fileURLToPath(new URL('./src/devboard/editor-shell', import.meta.url)),
       '@map': fileURLToPath(new URL('./src/play/map', import.meta.url)),
     },

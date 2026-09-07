@@ -14,9 +14,14 @@
 
 import type { MaterialCategory } from './materials'
 import { CATEGORIES, tileStyle } from './materials'
+import type { RealMaterialCategory } from './play-material-catalog'
+import { REAL_CATEGORIES, REAL_MATERIALS } from './play-material-catalog'
 
-export type { MaterialCategory }
+export type { MaterialCategory, RealMaterialCategory }
 export { tileStyle }
+
+/** 全部类别：占位陈设类（6）+ 真实玩法类（物品/武器/载具/生物/状态） */
+export const ALL_CATEGORIES: (MaterialCategory | RealMaterialCategory)[] = [...CATEGORIES, ...REAL_CATEGORIES]
 
 /* ---------------------------------------------------------------- 品级 ---- */
 
@@ -70,7 +75,7 @@ export type MaterialSource = 'standard' | 'ugc' | 'craft'
 export interface MaterialMeta {
   id: string
   name: string
-  category: MaterialCategory
+  category: MaterialCategory | RealMaterialCategory
   quality: Quality
   owned: boolean
   source: MaterialSource
@@ -86,6 +91,8 @@ export interface MaterialMeta {
   desc: string
   /** 限免剩余文案（limitedFree 时展示） */
   freeRemaining: string | null
+  /** 真实玩法素材的图标资源地址（304 词条图标之一）；占位陈设类素材无此字段 */
+  icon?: string
 }
 
 /* ----------------------------------------------------------- 角标派生 ---- */
@@ -406,7 +413,7 @@ function derive(): MaterialMeta[] {
   return out
 }
 
-export const MATERIALS_META: MaterialMeta[] = [...FEATURED, ...derive()]
+export const MATERIALS_META: MaterialMeta[] = [...FEATURED, ...derive(), ...REAL_MATERIALS]
 
 export function materialMetaById(id: string): MaterialMeta | null {
   return MATERIALS_META.find((m) => m.id === id) ?? null
@@ -428,7 +435,7 @@ export const BLUEPRINTS: BlueprintMeta[] = [
    ========================================================================== */
 
 export type Scope = 'all' | 'owned'
-export type CategoryFilter = '全部' | MaterialCategory
+export type CategoryFilter = '全部' | MaterialCategory | RealMaterialCategory
 
 /** 星标置顶（同筛选栏内排首）；其余保持原序，稳定排序 */
 export function starredFirst(list: MaterialMeta[], isStarred: (id: string) => boolean): MaterialMeta[] {
@@ -460,7 +467,7 @@ export const SCOPE_ITEMS: { key: Scope; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'owned', label: '我的素材' },
 ]
-export const CATEGORY_ITEMS: CategoryFilter[] = ['全部', ...CATEGORIES]
+export const CATEGORY_ITEMS: CategoryFilter[] = ['全部', ...ALL_CATEGORIES]
 
 /** 图鉴统计（静态占位，后续接真实进度） */
 export const COLLECTION = {

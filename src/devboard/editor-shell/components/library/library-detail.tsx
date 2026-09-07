@@ -93,6 +93,7 @@ export function LibraryDetail({ asset }: { asset: MaterialMeta }) {
                 tile={asset.tile}
                 glow={asset.glow}
                 textureUrl={textureUrl}
+                icon={asset.icon}
                 className="lib-hero-float h-[112px] w-[112px]"
               />
             </div>

@@ -7,7 +7,11 @@
   // 开发板与 Vite 壳层使用与根项目一致的严格索引检查，避免独立门禁掩盖
   // editor-shell 的数组/Map 可选值问题。壳层代码必须通过真实 guard 收敛 undefined。
   "compilerOptions": {
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    // 追加 vite/client：editor-shell 用 import.meta.glob 静态引入 profiles JSON 与
+    // svg-game-icons 资源（见 lib/play-material-catalog.ts），根 tsconfig 的
+    // types 不含它，这里覆盖时必须显式带上根配置原有的三项，否则会整体丢失。
+    "types": ["vitest/globals", "node", "react", "vite/client"]
   },
   "include": [
     "src/devboard",

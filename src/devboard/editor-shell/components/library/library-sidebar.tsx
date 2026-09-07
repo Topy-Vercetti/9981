@@ -1,8 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { CATEGORIES } from '@editor/lib/materials'
-import { COLLECTION, SCOPE_ITEMS } from '@editor/lib/library-data'
+import { ALL_CATEGORIES, COLLECTION, SCOPE_ITEMS } from '@editor/lib/library-data'
 import { useLibApp, setScope, setCategory } from '@editor/lib/library-store'
 import { playSfx } from '@editor/lib/sound'
 import { WeightedButton } from '@editor/components/fx/weighted-button'
@@ -42,7 +41,7 @@ export function LibrarySidebar() {
         <div>
           <p className="mb-1.5 px-2 font-sans text-[12px] font-bold tracking-wide text-[color:var(--lib-dim)]">类别</p>
           <ul className="flex flex-col gap-0.5">
-            {CATEGORIES.map((c) => (
+            {ALL_CATEGORIES.map((c) => (
               <NavRow
                 key={c}
                 label={c}
